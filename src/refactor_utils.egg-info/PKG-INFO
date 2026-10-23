@@ -2,9 +2,9 @@ Metadata-Version: 2.4
 Name: refactor_utils
 Version: 1.4.7
 Summary: Refactor small python packages
-Home-page: https://github.com/yourusername/pyrefactor
+Home-page: https://github.com/i4147/pyrefactor
 Author: Isaac Onagh
-Author-email: your.email@example.com
+Author-email: yesnacoc@gmail.com
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
 Classifier: License :: OSI Approved :: MIT License

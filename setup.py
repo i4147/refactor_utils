@@ -1,9 +1,8 @@
-from setuptools import setup, find_packages
-
+from setuptools import find_packages, setup
 setup(
     name="refactor_utils",
     version="1.4.7",
-    package_dir={"": "src"},  # This tells setuptools packages are under src/
+    package_dir={"": "src"},
     packages=find_packages(where="src"),
     entry_points={
         "console_scripts": [
@@ -13,8 +12,8 @@ setup(
     python_requires=">=3.11",
     description="Refactor small python packages",
     author="Isaac Onagh",
-    author_email="your.email@example.com",
-    url="https://github.com/yourusername/pyrefactor",
+    author_email="yesnacoc@gmail.com",
+    url="https://github.com/i4147/pyrefactor",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

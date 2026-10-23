@@ -1,12 +1,8 @@
-"""Command-line interface for pyrefactor."""
-
-from argparse import Namespace
 import argparse
+from argparse import Namespace
 from pathlib import Path
 from .core import run
 from .options import Options
-
-
 def parse_args() -> Namespace:
     p = argparse.ArgumentParser(
         prog="pyrefactor",
@@ -32,8 +28,6 @@ def parse_args() -> Namespace:
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--undo", action="store_true")
     return p.parse_args()
-
-
 def main() -> None:
     args = parse_args()
     cwd = Path.cwd()
@@ -55,7 +49,5 @@ def main() -> None:
     )
     print(f"Running pyrefactor mode={opts.mode} root={opts.root}")
     run(opts)
-
-
 if __name__ == "__main__":
     main()
