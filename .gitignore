@@ -27,4 +27,6 @@ undo/
 .env
 .ropeproject/
 .mypy_cache/
+*.zip
+*.whl
 

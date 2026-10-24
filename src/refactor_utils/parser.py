@@ -181,7 +181,14 @@ def _bound_names(node: Node) -> list[str]:
                 e = ch.named_children[0]
                 if e.type in ("assignment", "augmented_assignment"):
                     names += _target_names(e) or []
-            elif t in _COMPOUND or t in ("elif_clause", "else_clause", "except_clause", "finally_clause", "block", "case_clause"):
+            elif t in _COMPOUND or t in (
+                "elif_clause",
+                "else_clause",
+                "except_clause",
+                "finally_clause",
+                "block",
+                "case_clause",
+            ):
                 stack.append(ch)
     return list(dict.fromkeys(names))
 
@@ -255,8 +262,16 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
             obj = node.child_by_field_name("object")
             chain = _dotted(obj)
             if chain is not None and chain.split(".")[0] not in shadow:
-                occs.append(Occ(node.start_byte - base, node.end_byte - base,
-                                _t(node.child_by_field_name("attribute")), "attr", not lazy, chain))
+                occs.append(
+                    Occ(
+                        node.start_byte - base,
+                        node.end_byte - base,
+                        _t(node.child_by_field_name("attribute")),
+                        "attr",
+                        not lazy,
+                        chain,
+                    )
+                )
             if obj is not None:
                 stack.append((obj, lazy, shadow, False))
             continue
@@ -270,11 +285,10 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
         if t in _IMPORT_TYPES:
             specs = tuple(parse_import(node, info.module, info.is_pkg))
             ls = src.rfind(b"\n", 0, node.start_byte) + 1
-            indent = src[ls:node.start_byte].decode("utf-8", "replace")
+            indent = src[ls : node.start_byte].decode("utf-8", "replace")
             if indent.strip():
                 indent = ""
-            occs.append(Occ(node.start_byte - base, node.end_byte - base, "", "nested_import",
-                            not lazy, indent, specs))
+            occs.append(Occ(node.start_byte - base, node.end_byte - base, "", "nested_import", not lazy, indent, specs))
             continue
 
         if t == "function_definition":
@@ -395,7 +409,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     continue
                 if cond in _TC_NAMES:
                     body = n.child_by_field_name("consequence")
-                    for ch in (body.named_children if body is not None else []):
+                    for ch in body.named_children if body is not None else []:
                         if ch.type in _IMPORT_TYPES:
                             info.imports.extend(parse_import(ch, info.module, info.is_pkg))
                     continue

@@ -11,9 +11,31 @@ from loguru import logger
 from .models import SourceFile
 
 EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", "__pycache__", ".venv", "venv", "env", ".env", "build", "dist",
-    "node_modules", ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".eggs",
-    "site-packages", "tests", "test", "testing", "docs", "doc", ".idea", ".vscode",
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".env",
+    "build",
+    "dist",
+    "node_modules",
+    ".tox",
+    ".nox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".eggs",
+    "site-packages",
+    "tests",
+    "test",
+    "testing",
+    "docs",
+    "doc",
+    ".idea",
+    ".vscode",
 }
 EXCLUDED_FILE_GLOBS = ("__main__.py", "conftest.py", "test_*.py", "*_test.py", "setup.py")
 

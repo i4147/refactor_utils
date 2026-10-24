@@ -4,16 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "refactor_utils"
-version = "0.1.0"
+version = "1.4.8"
 description = "Consolidate a small/medium Python module, library or project into a single, dependency-ordered file."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "tree-sitter>=0.23",
-    "tree-sitter-python>=0.23",
-    "loguru>=0.7",
-]
-
 [project.scripts]
 pyrefactor = "refactor_utils.cli:main"
 

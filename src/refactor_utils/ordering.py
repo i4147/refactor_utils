@@ -55,7 +55,9 @@ def topo_order(
             blocked = ", ".join(sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand]))
             logger.warning(
                 "Circular import-time dependency: emitting {} ({}) before {}",
-                by_id[cand].primary or f"<{by_id[cand].kind}>", by_id[cand].module, blocked,
+                by_id[cand].primary or f"<{by_id[cand].kind}>",
+                by_id[cand].module,
+                blocked,
             )
             push(cand)
             continue

@@ -258,7 +258,9 @@ class Resolver:
             for g in mi.guards:
                 for spec in g.specs:
                     if self._is_internal(spec):
-                        self._warn_once(f"{m}: guarded import of internal module '{spec.module}' is kept verbatim and will not resolve")
+                        self._warn_once(
+                            f"{m}: guarded import of internal module '{spec.module}' is kept verbatim and will not resolve"
+                        )
             self.env[m] = env
 
     # ---- per-block analysis
@@ -303,8 +305,13 @@ class Resolver:
             blocks.sort(key=lambda x: (x.module.count("."), x.module, x.order))
             for dup in blocks[1:]:
                 self.canon[dup.bid] = blocks[0]
-                logger.info("Dropping duplicate {} '{}' from {} (identical to {})",
-                            dup.kind, dup.primary, dup.module, blocks[0].module)
+                logger.info(
+                    "Dropping duplicate {} '{}' from {} (identical to {})",
+                    dup.kind,
+                    dup.primary,
+                    dup.module,
+                    blocks[0].module,
+                )
 
     # ---- naming
     def _assign_names(self, kept: list[Block], emit_keys: set[tuple]) -> None:
@@ -423,9 +430,7 @@ class Resolver:
         body = [b for b in kept if b.kind != MAIN]
         mains = sorted((b for b in kept if b.kind == MAIN), key=keyfn)
 
-        deps: dict[int, set[int]] = {
-            b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid} for b in body
-        }
+        deps: dict[int, set[int]] = {b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid} for b in body}
         dependents: dict[int, set[int]] = defaultdict(set)
         for bid, ds in deps.items():
             for d in ds:
