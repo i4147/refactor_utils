@@ -3,7 +3,7 @@ from argparse import Namespace
 from pathlib import Path
 from .core import run
 from .options import Options
-def parse_args() -> Namespace:
+def parse_args():
     p = argparse.ArgumentParser(
         prog="pyrefactor",
         description="Refactor small python packages",
@@ -28,7 +28,7 @@ def parse_args() -> Namespace:
     p.add_argument("--quiet", action="store_true")
     p.add_argument("--undo", action="store_true")
     return p.parse_args()
-def main() -> None:
+def main():
     args = parse_args()
     cwd = Path.cwd()
     folder_name = cwd.name

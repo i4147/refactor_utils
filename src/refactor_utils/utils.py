@@ -6,14 +6,14 @@ import re
 import shutil
 import subprocess
 BACKUP_SUFFIX = ".bak"
-def list_py_files(root: str, recursive: bool = True):
+def list_py_files(root, recursive=True):
     out = []
     for d, _, files in os.walk(root):
         out.extend(os.path.join(d, f) for f in files if f.endswith(".py") and not f.endswith(BACKUP_SUFFIX + ".py"))
         if not recursive:
             break
     return out
-def ensure_backups(paths) -> None:
+def ensure_backups(paths):
     for p in paths:
         if pathlib.Path(p).exists():
             shutil.copy2(p, p + BACKUP_SUFFIX)
@@ -25,15 +25,15 @@ def restore_backups(paths):
             shutil.copy2(bak, p)
             restored.append(p)
     return restored
-def overwrite_file(path: str, content: str, dry_run: bool) -> None:
+def overwrite_file(path, content, dry_run):
     if dry_run:
         return
     pathlib.Path(pathlib.Path(path).parent or ".").mkdir(exist_ok=True, parents=True)
     pathlib.Path(path).write_text(content, encoding="utf-8")
-def try_format(path: str) -> None:
+def try_format(path):
     with contextlib.suppress(Exception):
         subprocess.run(["ruff", "format", path], check=False)
-def parse_name_from_block(block: str) -> str | None:
+def parse_name_from_block(block):
     block = block.strip()
     if block.startswith("def "):
         return block[4:].split("(")[0].strip()
@@ -45,9 +45,9 @@ def parse_name_from_block(block: str) -> str | None:
         if name.isupper() or "_" in name:
             return name
     return None
-def get_referenced_names(block: str) -> set[str]:
+def get_referenced_names(block):
     return set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\b", block))
-def topological_sort(blocks: list[str], defined_names: set[str]) -> list[str]:
+def topological_sort(blocks, defined_names):
     name_to_block = {}
     for b in blocks:
         n = parse_name_from_block(b)
@@ -83,7 +83,7 @@ def topological_sort(blocks: list[str], defined_names: set[str]) -> list[str]:
     if len(sorted_names) != len(name_to_block):
         return blocks
     return [name_to_block[n] for n in sorted_names]
-def _optimize_imports(import_blocks: list) -> str:
+def _optimize_imports(import_blocks):
     seen = set()
     merged_imports = defaultdict(list)
     for line in import_blocks:

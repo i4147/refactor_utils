@@ -5,23 +5,23 @@ from pathlib import Path
 from . import movers, utils
 from .options import Options
 from .utils import _optimize_imports
-def _target_module(opts: Options) -> str:
+def _target_module(opts):
     pkg = Path(Path(opts.root).resolve()).name
     return os.path.join(opts.root, f"{pkg}.py")
-def _get_target_paths(opts: Options) -> dict:
+def _get_target_paths(opts):
     return {
         "funcs": os.path.join(opts.root, opts.target_funcs),
         "consts": os.path.join(opts.root, opts.target_consts),
         "classes": os.path.join(opts.root, opts.target_classes),
     }
-def write_top_init(init_imports: list[str], root: str, dry: bool, opts: Options) -> None:
+def write_top_init(init_imports, root, dry, opts):
     pkg_name = Path(root).name
     optimized = _optimize_imports(init_imports)
     content = optimized.rstrip() + f"\n\nfrom .{pkg_name} import *\n"
     utils.overwrite_file(os.path.join(root, "__init__.py"), content, dry_run=dry)
     if opts.format and not dry:
         utils.try_format(os.path.join(root, "__init__.py"))
-def run_single_file(opts: Options) -> None:
+def run_single_file(opts):
     if opts.verbose:
         print(f"Running single_file mode: merging all Python files into one module")
     py_files = utils.list_py_files(opts.root, recursive=True)
@@ -63,7 +63,7 @@ def run_single_file(opts: Options) -> None:
             f"Successfully merged {len(funcs)} functions, {len(classes)} classes, "
             f"and {len(consts)} constants into {pkg}.py"
         )
-def run_single(opts: Options) -> None:
+def run_single(opts):
     py_files = utils.list_py_files(opts.root, recursive=True)
     init_path = os.path.join(opts.root, "__init__.py")
     paths = [p for p in py_files if pathlib.Path(p).resolve() != pathlib.Path(init_path).resolve()]
@@ -79,7 +79,7 @@ def run_single(opts: Options) -> None:
     if opts.format and not dry_run:
         utils.try_format(target)
         utils.try_format(init_path)
-def run_small(opts: Options) -> None:
+def run_small(opts):
     py_files = utils.list_py_files(opts.root, recursive=False)
     init_path = os.path.join(opts.root, "__init__.py")
     paths = [p for p in py_files if p != init_path]
@@ -97,7 +97,7 @@ def run_small(opts: Options) -> None:
     if opts.format and not dry_run:
         with ThreadPoolExecutor() as ex:
             ex.map(utils.try_format, [target, init_path])
-def run_merge(opts: Options) -> None:
+def run_merge(opts):
     root = opts.root
     py_files = utils.list_py_files(root, recursive=True)
     target_files = {
@@ -145,7 +145,7 @@ def run_merge(opts: Options) -> None:
         with ThreadPoolExecutor() as executor:
             all_targets = list(targets.values()) + [init_file]
             executor.map(utils.try_format, all_targets)
-def run_subpkg(opts: Options) -> None:
+def run_subpkg(opts):
     py_files = utils.list_py_files(opts.root, recursive=True)
     init_path = pathlib.Path(os.path.join(opts.root, "__init__.py")).resolve()
     paths = [p for p in py_files if pathlib.Path(p).resolve() != init_path]
@@ -221,7 +221,7 @@ def run_subpkg(opts: Options) -> None:
                 content,
                 dry_run=is_dry_run,
             )
-def run(opts: Options) -> None:
+def run(opts):
     if opts.undo:
         pkg = os.path.basename(os.path.abspath(opts.root))
         targets = [

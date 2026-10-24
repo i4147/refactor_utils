@@ -7,22 +7,22 @@ from .utils import (
     parse_name_from_block,
     topological_sort,
 )
-def make_all(names: list[str]) -> str:
+def make_all(names):
     uniq = sorted(set(names))
     items = ",\n    ".join(f'"{n}"' for n in uniq)
     return f"__all__ = [\n    {items}\n]\n"
 @lru_cache(maxsize=256)
-def _parse_import_line(imp: str) -> list[str]:
+def _parse_import_line(imp):
     if imp.startswith("import "):
         return [n.strip().split()[0] for n in imp[7:].split(",")]
     if imp.startswith("from "):
         return [imp.split()[1]]
     return []
-def _get_block(lines: list[str], node) -> str:
+def _get_block(lines, node):
     start = node.lineno - 1
     end = getattr(node, "end_lineno", start + 1)
     return "\n".join(lines[start:end]) + "\n"
-def parse_top_level_items(path: str):
+def parse_top_level_items(path):
     try:
         src = pathlib.Path(path).open(encoding="utf-8").read()
         tree = ast.parse(src)
@@ -42,7 +42,7 @@ def parse_top_level_items(path: str):
         ):
             consts.append(_get_block(lines, node))
     return funcs, consts, classes, imports
-def collect_from_files(paths: list[str]):
+def collect_from_files(paths):
     with ThreadPoolExecutor() as ex:
         results = list(ex.map(parse_top_level_items, paths))
     file_map = {}
@@ -59,11 +59,11 @@ def collect_from_files(paths: list[str]):
         all_classes += cl
         all_imports += im
     return all_funcs, all_consts, all_classes, all_imports, file_map
-def build_merged_module(file_map: dict) -> str:
+def build_merged_module(file_map):
     imports = []
     consts, funcs, classes = [], [], []
     const_names, func_names, class_names = [], [], []
-    name_sources: dict[str, str] = {}
+    name_sources = {}
     for path, b in file_map.items():
         imports.extend(b["imports"])
         for block in b["consts"]:
@@ -113,7 +113,7 @@ def build_merged_module(file_map: dict) -> str:
         result_parts.append(body)
     result_parts.append(all_block)
     return "\n\n\n".join(result_parts) + "\n"
-def build_top_level_modules(file_map: dict):
+def build_top_level_modules(file_map):
     funcs_content = []
     consts_content = []
     classes_content = []
@@ -129,7 +129,7 @@ def build_top_level_modules(file_map: dict):
         "\n\n".join(consts_content),
         "\n\n".join(classes_content),
     )
-def build_subpkg_modules(root: str, file_map: dict):
+def build_subpkg_modules(root, file_map):
     pkg_map = {}
     for path, buckets in file_map.items():
         rel_path = pathlib.Path(path).relative_to(root) if root in path else pathlib.Path(path)
@@ -148,5 +148,5 @@ def build_subpkg_modules(root: str, file_map: dict):
             buckets,
         )
     return result
-def make_all_list(items: list[str]) -> str:
+def make_all_list(items):
     return "[\n    " + ",\n    ".join(f'"{item}"' for item in sorted(set(items))) + "\n]"
