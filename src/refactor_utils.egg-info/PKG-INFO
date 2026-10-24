@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: refactor_utils
+Version: 1.4.8
+Summary: Consolidate a small/medium Python module, library or project into a single, dependency-ordered file.
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
+# refactor_utils
+
+Consolidate a small/medium Python module, library or project into one dependency-ordered file.
+
+```
+pip install -e .
+pyrefactor path/to/package -o output
+```
+
+Output (`--mode single`):
+
+```
+output/
+  __init__.py        # re-exports public constants, classes, functions + __all__
+  _consolidated.py   # imports -> constants -> classes -> functions -> entry points
+```
+
+## What it does
+
+- Parses every file with **tree-sitter** (in parallel worker processes); skips tests, `conftest.py`, `setup.py` and every `__main__.py`.
+- Orders blocks by import-time dependencies (base classes, decorators, defaults, class bodies, module-level calls), preferring constants -> classes -> functions. Cycles are reported with a warning.
+- Resolves same-named objects across modules: the shallowest module keeps the name, the others become `<module_path>_<name>` and every reference (including `from .x import y as z` and `mod.attr` access) is rewritten. Identical, self-contained classes/functions are merged.
+- Optimizes imports: internal imports removed, external ones merged, de-duplicated, conflict-aliased, unused ones dropped (`--keep-unused-imports` to disable), grouped `__future__` / stdlib / third-party.
+- `main` functions and `if __name__ == "__main__":` guards go to the end (`--entry MODULE` keeps a single guard).
+- Errors and warnings are logged with **loguru** (`--log-file`, `--log-level`).
+
+## Known limits
+
+Renaming is name-based (parameters are respected, other locals are not). `__file__`/`__name__` semantics change in a single file (a warning is logged). Guarded imports (`try/except ImportError`) are kept verbatim.
