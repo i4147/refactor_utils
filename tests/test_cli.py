@@ -8,11 +8,13 @@ from refactor_utils.cli import build_parser, main
 
 
 def test_build_parser_exists():
+    """Check that the CLI argument parser can be built."""
     p = build_parser()
     assert p.prog == "pyrefactor"
 
 
 def test_help_contains_all_flags():
+    """Check that ``--help`` documents every supported flag."""
     p = build_parser()
     help_text = p.format_help()
     for flag in [
@@ -39,6 +41,7 @@ def test_help_contains_all_flags():
 
 
 def test_cli_aliases():
+    """Check that legacy alias flags map to their canonical options."""
     p = build_parser()
     # --jobs alias for --workers
     args = p.parse_args(["src", "-o", "out", "--jobs", "2"])
@@ -55,6 +58,7 @@ def test_cli_aliases():
 
 
 def test_cli_dry_run_no_write(tmp_path):
+    """Check that ``--dry-run`` never writes files."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -65,6 +69,7 @@ def test_cli_dry_run_no_write(tmp_path):
 
 
 def test_cli_stdout(tmp_path, capsys):
+    """Check that ``--stdout`` prints the generated source."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -78,6 +83,7 @@ def test_cli_stdout(tmp_path, capsys):
 
 
 def test_cli_strict_fails_on_skipped(tmp_path):
+    """Check that ``--strict`` fails when files were skipped."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -88,6 +94,7 @@ def test_cli_strict_fails_on_skipped(tmp_path):
 
 
 def test_cli_max_skipped(tmp_path):
+    """Check that ``--max-skipped`` bounds the number of skipped files."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -98,6 +105,7 @@ def test_cli_max_skipped(tmp_path):
 
 
 def test_cli_fail_on_warning(tmp_path):
+    """Check that ``--fail-on-warning`` turns warnings into failures."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     # __file__ triggers warning
@@ -108,6 +116,7 @@ def test_cli_fail_on_warning(tmp_path):
 
 
 def test_cli_validate(tmp_path):
+    """Check that ``--validate`` compiles the generated output."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -118,6 +127,7 @@ def test_cli_validate(tmp_path):
 
 
 def test_cli_modes(tmp_path):
+    """Check that every output mode runs through the CLI."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -129,6 +139,7 @@ def test_cli_modes(tmp_path):
 
 
 def test_cli_include_exclude(tmp_path):
+    """Check ``--include``/``--exclude`` precedence from the CLI."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "keep.py").write_text("X=1\n")
@@ -150,6 +161,7 @@ def test_cli_include_exclude(tmp_path):
 
 
 def test_cli_unknown_mode(tmp_path):
+    """Check that an unknown ``--mode`` value is rejected."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")

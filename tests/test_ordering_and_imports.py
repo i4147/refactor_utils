@@ -12,6 +12,7 @@ from refactor_utils.models import ImportSpec
 
 
 def make_block(bid, module, order, kind="const", primary=""):
+    """Build a minimal block for ordering and import tests."""
     return Block(
         module=module,
         kind=kind,
@@ -24,6 +25,7 @@ def make_block(bid, module, order, kind="const", primary=""):
 
 
 def test_topo_order_simple():
+    """Check that dependencies are emitted before their dependents."""
     b1 = make_block(0, "a", 0, primary="X")
     b2 = make_block(1, "b", 0, primary="Y")
     deps = {1: {0}}  # b2 depends on b1
@@ -33,6 +35,7 @@ def test_topo_order_simple():
 
 
 def test_topo_order_cycle():
+    """Check that a cycle is broken with a warning instead of hanging."""
     b1 = make_block(0, "a", 0)
     b2 = make_block(1, "b", 0)
     deps = {0: {1}, 1: {0}}  # cycle
@@ -42,6 +45,7 @@ def test_topo_order_cycle():
 
 
 def test_render_import_line():
+    """Check single import statement rendering."""
     spec = ImportSpec("os")
     assert render_import_line(spec) == "import os"
     spec2 = ImportSpec("os", alias="myos")
@@ -55,12 +59,14 @@ def test_render_import_line():
 
 
 def test_future_section():
+    """Check rendering of the ``__future__`` import line."""
     assert future_section(["annotations"]) == "from __future__ import annotations"
     assert future_section([]) == ""
 
 
 def test_wrap():
     # Short line not wrapped
+    """Check wrapping of long ``from`` imports."""
     assert "from os import path" in _wrap("os", ["path"])
     # Long line wrapped
     items = [f"item{i}" for i in range(20)]
@@ -70,6 +76,7 @@ def test_wrap():
 
 
 def test_build_import_section():
+    """Check merging and de-duplication of the import section."""
     keys = [
         ("import", "os", None),
         ("from", "sys", "path", None),
@@ -83,6 +90,7 @@ def test_build_import_section():
 
 def test_build_import_section_grouping():
     # stdlib vs third-party grouping
+    """Check that stdlib imports are grouped before third-party ones."""
     keys = [("import", "os", None), ("import", "requests", None)]
     section = build_import_section(keys, {})
     # Should have two groups separated by blank line

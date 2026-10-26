@@ -9,7 +9,16 @@ from refactor_utils.models import ModuleInfo
 
 
 def make_modules(tmp_path, files: dict[str, str]) -> dict[str, ModuleInfo]:
-    """Helper to parse multiple files into ModuleInfo dict."""
+    """Parse multiple files into a mapping of module name to ``ModuleInfo``.
+
+    Args:
+        tmp_path: Directory the files are written to.
+        files: Mapping of relative path to source text.
+
+    Returns:
+        Parsed modules keyed by dotted module name.
+
+    """
     mods = {}
     for fname, src in files.items():
         p = tmp_path / fname
@@ -26,6 +35,7 @@ def make_modules(tmp_path, files: dict[str, str]) -> dict[str, ModuleInfo]:
 
 
 def test_rename_prefix(tmp_path):
+    """Check prefix renaming of colliding names."""
     mods = make_modules(
         tmp_path,
         {
@@ -43,6 +53,7 @@ def test_rename_prefix(tmp_path):
 
 
 def test_rename_suffix(tmp_path):
+    """Check suffix renaming of colliding names."""
     mods = make_modules(
         tmp_path,
         {
@@ -57,6 +68,7 @@ def test_rename_suffix(tmp_path):
 
 
 def test_rename_module_path(tmp_path):
+    """Check full-module-path renaming of colliding names."""
     mods = make_modules(
         tmp_path,
         {
@@ -70,6 +82,7 @@ def test_rename_module_path(tmp_path):
 
 
 def test_rename_error_raises(tmp_path):
+    """Check that the ``error`` rename strategy fails on collisions."""
     mods = make_modules(
         tmp_path,
         {
@@ -83,6 +96,7 @@ def test_rename_error_raises(tmp_path):
 
 
 def test_dedupe_none(tmp_path):
+    """Check that ``dedupe='none'`` keeps duplicate blocks."""
     mods = make_modules(
         tmp_path,
         {
@@ -98,6 +112,7 @@ def test_dedupe_none(tmp_path):
 
 
 def test_dedupe_safe(tmp_path):
+    """Check that ``dedupe='safe'`` drops identical functions."""
     mods = make_modules(
         tmp_path,
         {
@@ -111,6 +126,7 @@ def test_dedupe_safe(tmp_path):
 
 
 def test_dedupe_aggressive(tmp_path):
+    """Check how each dedupe mode treats duplicate constants."""
     mods = make_modules(
         tmp_path,
         {
@@ -125,11 +141,37 @@ def test_dedupe_aggressive(tmp_path):
 
     r2 = Resolver(mods, dedupe="safe")
     plan2 = r2.build()
-    # Safe should not dedupe consts
-    assert len(plan2.deduped) == 0
+    # Safe dedupes byte-identical constant definitions too
+    assert len(plan2.deduped) == 1
+
+    mods_diff = make_modules(
+        tmp_path / "diff",
+        {
+            "pkg2/a.py": "X = 1",
+            "pkg2/b.py": "X = 2",
+        },
+    )
+    plan3 = Resolver(mods_diff, dedupe="safe").build()
+    # ... but never constants whose source differs
+    assert len(plan3.deduped) == 0
+
+
+def test_const_named_all_is_never_emitted(tmp_path):
+    """Check that ``__all__`` never leaks into the output."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n',
+        },
+    )
+    plan = Resolver(mods).build()
+    texts = [b.text for b in plan.blocks]
+    assert not any("__all__ =" in t for t in texts)
+    assert "__all__" not in plan.exports["constants"]
 
 
 def test_imports_prune_vs_keep(tmp_path):
+    """Check that ``keep`` emits at least as many imports as ``prune``."""
     mods = make_modules(
         tmp_path,
         {
@@ -150,6 +192,7 @@ def test_imports_prune_vs_keep(tmp_path):
 
 
 def test_all_ignore_vs_respect(tmp_path):
+    """Check the difference between ``ignore`` and ``respect`` export modes."""
     mods = make_modules(
         tmp_path,
         {
@@ -169,6 +212,7 @@ def test_all_ignore_vs_respect(tmp_path):
 
 
 def test_all_merge(tmp_path):
+    """Check that ``merge`` unions declared and public names."""
     mods = make_modules(
         tmp_path,
         {
@@ -182,6 +226,7 @@ def test_all_merge(tmp_path):
 
 
 def test_all_recompute(tmp_path):
+    """Check that ``recompute`` ignores declarations and exports public names."""
     mods = make_modules(
         tmp_path,
         {
@@ -196,6 +241,7 @@ def test_all_recompute(tmp_path):
 
 
 def test_entry_filter(tmp_path):
+    """Check that only the requested ``__main__`` guard is kept."""
     mods = make_modules(
         tmp_path,
         {
@@ -213,6 +259,7 @@ def test_entry_filter(tmp_path):
 
 
 def test_main_name_rename(tmp_path):
+    """Check the ``main_name`` override, including collisions."""
     mods = make_modules(
         tmp_path,
         {
@@ -228,6 +275,7 @@ def test_main_name_rename(tmp_path):
 
 
 def test_generate_guard(tmp_path):
+    """Check that a missing ``__main__`` guard can be generated."""
     mods = make_modules(
         tmp_path,
         {
@@ -247,6 +295,7 @@ def test_generate_guard(tmp_path):
 
 
 def test_namespace_source_map_flags(tmp_path):
+    """Check that namespace and source-map flags reach the plan."""
     mods = make_modules(tmp_path, {"pkg/a.py": "X=1"})
     r = Resolver(mods, namespace=True, preserve_modules=True, source_map=True)
     plan = r.build()

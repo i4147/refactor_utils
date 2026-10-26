@@ -7,6 +7,7 @@ from refactor_utils.parser import parse_module_file
 
 
 def test_parser_basic(tmp_path):
+    """Check that blocks, imports and names are extracted."""
     p = tmp_path / "mod.py"
     p.write_text(
         textwrap.dedent("""\
@@ -25,6 +26,7 @@ def test_parser_basic(tmp_path):
 
 
 def test_parser_bom_handling(tmp_path):
+    """Check that a UTF-8 BOM is stripped before parsing."""
     p = tmp_path / "bom.py"
     p.write_bytes(b"\xef\xbb\xbfX = 1\n")
     info = parse_module_file(str(p), "bom", False)
@@ -33,6 +35,7 @@ def test_parser_bom_handling(tmp_path):
 
 
 def test_parser_crlf_warning(tmp_path):
+    """Check that CRLF sources produce a warning."""
     p = tmp_path / "crlf.py"
     p.write_bytes(b"X = 1\r\nY = 2\r\n")
     info = parse_module_file(str(p), "crlf", False)
@@ -40,6 +43,7 @@ def test_parser_crlf_warning(tmp_path):
 
 
 def test_parser_syntax_error_default(tmp_path):
+    """Check that a syntax error skips the file by default."""
     p = tmp_path / "bad.py"
     p.write_text("def oops(\n    syntax error\n")
     info = parse_module_file(str(p), "bad", False)
@@ -48,6 +52,7 @@ def test_parser_syntax_error_default(tmp_path):
 
 
 def test_parser_allow_syntax_errors(tmp_path):
+    """Check that ``allow_syntax_errors`` extracts what it can."""
     p = tmp_path / "bad.py"
     p.write_text("def oops(\n    syntax error\n")
     info = parse_module_file(str(p), "bad", False, allow_syntax_errors=True)
@@ -57,6 +62,7 @@ def test_parser_allow_syntax_errors(tmp_path):
 
 
 def test_parser_strip_docstrings(tmp_path):
+    """Check that docstrings can be stripped per flag."""
     p = tmp_path / "doc.py"
     p.write_text(
         textwrap.dedent('''\
@@ -77,6 +83,7 @@ def test_parser_strip_docstrings(tmp_path):
 
 
 def test_parser_strip_comments(tmp_path):
+    """Check that standalone comments can be stripped."""
     p = tmp_path / "comm.py"
     p.write_text(
         textwrap.dedent("""\
@@ -96,6 +103,7 @@ def test_parser_strip_comments(tmp_path):
 
 
 def test_parser_shebang_preserved_when_strip(tmp_path):
+    """Check that a shebang survives comment stripping."""
     p = tmp_path / "shebang.py"
     p.write_text("#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nX = 1\n# comment\n")
     info = parse_module_file(str(p), "shebang", False, strip_comments=True)
@@ -106,6 +114,7 @@ def test_parser_shebang_preserved_when_strip(tmp_path):
 
 
 def test_parser_dynamic_patterns(tmp_path):
+    """Check that dynamic constructs produce warnings."""
     p = tmp_path / "dyn.py"
     p.write_text(
         textwrap.dedent("""\
@@ -121,6 +130,7 @@ def test_parser_dynamic_patterns(tmp_path):
 
 
 def test_parser_runtime_semantics_file(tmp_path):
+    """Check that ``__file__`` usage is reported."""
     p = tmp_path / "runtime.py"
     p.write_text("x = __file__\ny = __name__\n")
     info = parse_module_file(str(p), "runtime", False)
@@ -129,6 +139,7 @@ def test_parser_runtime_semantics_file(tmp_path):
 
 
 def test_parser_conditional_import_warning(tmp_path):
+    """Check that conditional imports are kept and reported."""
     p = tmp_path / "cond.py"
     p.write_text(
         textwrap.dedent("""\
@@ -145,6 +156,7 @@ def test_parser_conditional_import_warning(tmp_path):
 
 
 def test_parser_type_checking_import(tmp_path):
+    """Check that ``TYPE_CHECKING`` imports are extracted."""
     p = tmp_path / "tc.py"
     p.write_text(
         textwrap.dedent("""\
@@ -162,6 +174,7 @@ def test_parser_type_checking_import(tmp_path):
 
 
 def test_parser_all_mutation_warning(tmp_path):
+    """Check that mutated ``__all__`` is reported."""
     p = tmp_path / "allmut.py"
     p.write_text('__all__ = ["a"]\n__all__.append("b")\n')
     info = parse_module_file(str(p), "allmut", False)
@@ -170,6 +183,7 @@ def test_parser_all_mutation_warning(tmp_path):
 
 
 def test_parser_source_map_fields(tmp_path):
+    """Check that source line ranges are recorded per block."""
     p = tmp_path / "map.py"
     p.write_text("X = 1\nY = 2\n")
     info = parse_module_file(str(p), "map", False)
@@ -180,6 +194,7 @@ def test_parser_source_map_fields(tmp_path):
 
 def test_parser_permission_error():
     # Non-existent file
+    """Check that an unreadable file is reported, not raised."""
     info = parse_module_file("/nonexistent/path.py", "bad", False)
     assert info.errors
     assert any("cannot read" in e for e in info.errors)
