@@ -1,5 +1,4 @@
-"""
-Programmatic API: using refactor_utils.consolidate() directly.
+"""Programmatic API: using refactor_utils.consolidate() directly.
 
 Covers dry-run, diff, validate, data files.
 
@@ -13,6 +12,7 @@ from refactor_utils.core import consolidate
 
 
 def demo_dry_run():
+    """Show a dry run that writes nothing."""
     print("=== Dry-run (no files written) ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -27,6 +27,7 @@ def demo_dry_run():
 
 
 def demo_validate():
+    """Show validation of the generated output."""
     print("\n=== Validate (compile + import) ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -38,6 +39,7 @@ def demo_validate():
 
 
 def demo_diff():
+    """Show the unified diff against existing output."""
     print("\n=== Diff against existing output ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -53,6 +55,7 @@ def demo_diff():
 
 
 def demo_data_files():
+    """Show data file copying alongside the output."""
     print("\n=== Data files preservation ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "app"

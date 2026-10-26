@@ -1,5 +1,4 @@
-"""
-helpers.py — Python helpers for project creation, data file checks, validation.
+"""helpers.py — Python helpers for project creation, data file checks, validation.
 
 These are the python snippets executed via `bash -c "python ..."` or imported in tests/examples
 throughout the arena session.
@@ -66,7 +65,15 @@ def create_sample_project(base: Path) -> Path:
 
 
 def create_src_layout(base: Path) -> Path:
-    """src/ layout: base/src/mypkg/*"""
+    """Create a ``src/`` layout project (``base/src/mypkg``) and return its base.
+
+    Args:
+        base: Directory to create the project in.
+
+    Returns:
+        The ``base`` directory.
+
+    """
     src = base / "src"
     pkg = src / "mypkg"
     pkg.mkdir(parents=True, exist_ok=True)
@@ -76,7 +83,15 @@ def create_src_layout(base: Path) -> Path:
 
 
 def create_namespace_package(base: Path) -> Path:
-    """PEP 420 namespace (no __init__.py)."""
+    """Create a PEP 420 namespace package (no ``__init__.py``) fixture.
+
+    Args:
+        base: Directory to create the package in.
+
+    Returns:
+        The ``base`` directory.
+
+    """
     ns = base / "ns_pkg"
     ns.mkdir(parents=True, exist_ok=True)
     (ns / "mod.py").write_text("def func(): return 42\n")

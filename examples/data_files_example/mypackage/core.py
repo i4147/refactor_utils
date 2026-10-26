@@ -16,4 +16,5 @@ def hello():
 
 
 def add(a, b):
+    """Add two numbers (example of a second public function)."""
     return a + b

@@ -1,5 +1,4 @@
-"""
-Basic usage of pyrefactor — CLI and Python API.
+"""Basic usage of pyrefactor — CLI and Python API.
 
 Run:
     python examples/basic_usage.py
@@ -13,6 +12,7 @@ from refactor_utils.core import consolidate
 
 
 def demo_programmatic():
+    """Consolidate a tiny package through the Python API."""
     print("=== Programmatic API: basic consolidation ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "mypackage"
@@ -42,6 +42,7 @@ def demo_programmatic():
 
 
 def demo_cli():
+    """Show the equivalent command line invocation."""
     print("\n=== CLI: equivalent to ===")
     print("pyrefactor path/to/package -o output --overwrite --validate")
     print("See examples/data_files_example for a runnable CLI example.")
