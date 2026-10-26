@@ -22,3 +22,12 @@ src/refactor_utils/data/README.md
 src/refactor_utils/data/config.ini
 src/refactor_utils/data/example.csv
 src/refactor_utils/data/sample.json
+tests/test_cli.py
+tests/test_core.py
+tests/test_data_files.py
+tests/test_discovery.py
+tests/test_integration.py
+tests/test_ordering_and_imports.py
+tests/test_parser.py
+tests/test_resolver.py
+tests/test_writer.py

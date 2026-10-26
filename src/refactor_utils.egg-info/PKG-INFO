@@ -7,6 +7,19 @@ Description-Content-Type: text/markdown
 Requires-Dist: loguru
 Requires-Dist: tree-sitter
 Requires-Dist: tree_sitter_python
+Provides-Extra: format
+Requires-Dist: black; extra == "format"
+Requires-Dist: ruff; extra == "format"
+Provides-Extra: progress
+Requires-Dist: tqdm; extra == "progress"
+Provides-Extra: test
+Requires-Dist: pytest; extra == "test"
+Requires-Dist: pytest-cov; extra == "test"
+Requires-Dist: tqdm; extra == "test"
+Provides-Extra: docs
+Requires-Dist: mkdocs; extra == "docs"
+Requires-Dist: mkdocs-material; extra == "docs"
+Requires-Dist: mkdocstrings[python]; extra == "docs"
 
 # refactor_utils
 
