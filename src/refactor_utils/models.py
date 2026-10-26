@@ -1,20 +1,17 @@
 """Plain, picklable data structures shared by the parser and the resolver."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 CONST = "const"
 CLASS = "class"
 FUNC = "func"
-MISC = "misc"  # top-level statements that are not plain definitions
-MAIN = "main"  # ``if __name__ == "__main__":`` blocks
+MISC = "misc"
+MAIN = "main"
 
 
 @dataclass(frozen=True)
 class ImportSpec:
-    """One imported binding (``import a.b as c`` / ``from a import b as c``)."""
-
     module: str
     name: str | None = None
     alias: str | None = None
@@ -33,27 +30,17 @@ class ImportSpec:
 
 @dataclass(slots=True)
 class Occ:
-    """A rewritable occurrence inside a block (byte offsets relative to the block).
-
-    kind:
-      * ``name``          - a bare identifier reference/definition
-      * ``attr``          - ``a.b.c`` attribute chain (``obj`` = ``a.b``, ``name`` = ``c``)
-      * ``nested_import`` - an import statement inside a function/class body
-    """
-
     start: int
     end: int
     name: str
     kind: str
-    eager: bool = True  # evaluated at import time (not inside a function body)
-    obj: str = ""  # dotted object for attr; indentation for nested_import
+    eager: bool = True
+    obj: str = ""
     specs: tuple[ImportSpec, ...] = ()
 
 
 @dataclass(eq=False)
 class Block:
-    """A top-level unit of code: a constant, class, function or statement."""
-
     module: str
     kind: str
     names: list[str]
@@ -67,7 +54,6 @@ class Block:
         return self.names[0] if self.names else ""
 
     def merge(self, other: "Block") -> None:
-        """Append another block that (re)binds the same name (overloads, ``X += 1`` ...)."""
         shift = len(self.source) + 1
         for occ in other.occs:
             occ.start += shift
@@ -81,8 +67,6 @@ class Block:
 
 @dataclass
 class GuardBlock:
-    """A ``try/except ImportError`` style block kept verbatim in the import section."""
-
     text: str
     specs: list[ImportSpec]
 
@@ -103,6 +87,6 @@ class ModuleInfo:
 
 @dataclass(frozen=True)
 class SourceFile:
-    path: "object"  # pathlib.Path (kept loose to stay trivially picklable)
+    path: "object"
     module: str
     is_pkg: bool

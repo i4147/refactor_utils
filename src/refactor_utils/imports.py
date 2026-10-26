@@ -1,17 +1,10 @@
 """Merge, de-duplicate, sort and render the import section."""
 
 from __future__ import annotations
-
 import sys
 from collections import defaultdict
 from typing import Iterable, Mapping
-
 from .models import ImportSpec
-
-# Import keys (hashable, shared between resolver and this module):
-#   ("import", module, alias)        ->  import module [as alias]
-#   ("from", module, name, alias)    ->  from module import name [as alias]
-#   ("star", module)                 ->  from module import *
 
 _STDLIB = getattr(sys, "stdlib_module_names", frozenset())
 _LINE = 88
@@ -52,7 +45,6 @@ def future_section(names: Iterable[str]) -> str:
 def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) -> str:
     plain: dict[int, set[tuple[str, str | None]]] = defaultdict(set)
     froms: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
-
     for key in keys:
         kind = key[0]
         if kind == "import":
@@ -65,12 +57,10 @@ def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) 
             froms[_group(mod)][mod].add(name if final == name else f"{name} as {final}")
         elif kind == "star":
             froms[_group(key[1])][key[1]].add("*")
-
     chunks: list[str] = []
     for grp in (0, 1):
         lines: list[str] = []
         entries = plain.get(grp, set())
-        # ``import a.b`` already binds ``a``: drop a bare ``import a``
         dotted_tops = {m.split(".")[0] for m, a in entries if a is None and "." in m}
         for mod, alias in sorted(entries, key=lambda e: (e[0].lower(), e[1] or "")):
             if alias is None and "." not in mod and mod in dotted_tops:

@@ -1,29 +1,25 @@
 """Cross-module resolution: name collisions, import rewriting, dedupe, ordering."""
 
 from __future__ import annotations
-
 import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Iterable
-
 from loguru import logger
-
 from .imports import build_import_section, future_section, render_import_line
 from .models import CLASS, CONST, FUNC, MAIN, MISC, Block, ImportSpec, ModuleInfo
 from .ordering import topo_order
 
 # Target = ("def", Block, original_name) | ("ext", key) | ("mod", module_name)
 Target = tuple
-
 _RANK = {CONST: 0, MISC: 0, CLASS: 1, FUNC: 2}
 _SECTION = {CONST: "const", MISC: "const", CLASS: "class", FUNC: "func"}
 
 
 @dataclass
 class RenderedBlock:
-    section: str  # const | class | func | entry
+    section: str
     kind: str
     text: str
 
@@ -70,7 +66,6 @@ class Resolver:
         self.respect_all = respect_all
         self.entry = tuple(entry)
         self.workers = max(1, workers)
-
         self.known: set[str] = set(self.modules)
         for m in list(self.modules):
             parts = m.split(".")
@@ -80,7 +75,6 @@ class Resolver:
         self.mod_idx = {m: i for i, m in enumerate(self.modules)}
         tops_all = {m.split(".")[0] for m in self.modules}
         self.single_top = next(iter(tops_all)) if len(tops_all) == 1 else None
-
         self.blocks: list[Block] = []
         for mi in self.modules.values():
             for b in mi.blocks:
@@ -88,12 +82,10 @@ class Resolver:
                     continue
                 b.bid = len(self.blocks)
                 self.blocks.append(b)
-
         self.def_block: dict[tuple[str, str], Block] = {}
         for b in self.blocks:
             for n in b.names:
                 self.def_block[(b.module, n)] = b
-
         self.future_names: set[str] = set()
         self.import_table: dict[str, dict[str, ImportSpec]] = {}
         self.star_specs: dict[str, list[ImportSpec]] = {}
@@ -111,7 +103,6 @@ class Resolver:
                     table.setdefault(spec.local_name, spec)
             self.import_table[m] = table
             self.star_specs[m] = stars
-
         self.env: dict[str, dict[str, Target]] = {}
         self.eager: dict[int, set[Block]] = {}
         self.proj_refs: dict[int, set[Block]] = {}
@@ -123,7 +114,6 @@ class Resolver:
         self.star_keys: set[tuple] = set()
         self._warned: set[str] = set()
 
-    # ------------------------------------------------------------------ helpers
     def _entry_match(self, module: str) -> bool:
         return any(module == e or module.endswith("." + e) for e in self.entry)
 
@@ -146,7 +136,6 @@ class Resolver:
             parts = parts[1:]
         return _sanitize("_".join(parts)) or "mod"
 
-    # ------------------------------------------------------------------ symbol resolution
     def _star_names(self, module: str) -> list[str]:
         mi = self.modules.get(module)
         if mi is None:
@@ -207,7 +196,6 @@ class Resolver:
         res = self._resolve_symbol(mod, attr)
         return res if res is not None and res[0] in ("def", "ext") else None
 
-    # ------------------------------------------------------------------ pipeline
     def build(self) -> Plan:
         self._build_envs()
         self._analyse()
@@ -224,7 +212,6 @@ class Resolver:
         rendered = self._render_all(kept)
         return self._assemble(kept, rendered, emit_keys)
 
-    # ---- environments
     def _build_envs(self) -> None:
         for m, mi in self.modules.items():
             env: dict[str, Target] = {}
@@ -263,7 +250,6 @@ class Resolver:
                         )
             self.env[m] = env
 
-    # ---- per-block analysis
     def _analyse(self) -> None:
         for b in self.blocks:
             env = self.env[b.module]
@@ -293,7 +279,6 @@ class Resolver:
             self.eager[b.bid], self.proj_refs[b.bid] = eager, proj
             self.ext_keys[b.bid], self.ext_refs[b.bid] = ext_keys, frozenset(ext_refs)
 
-    # ---- duplicates (self-contained stateless definitions only)
     def _dedupe(self) -> None:
         groups: dict[tuple, list[Block]] = defaultdict(list)
         for b in self.blocks:
@@ -313,7 +298,6 @@ class Resolver:
                     blocks[0].module,
                 )
 
-    # ---- naming
     def _assign_names(self, kept: list[Block], emit_keys: set[tuple]) -> None:
         ext_loc_modules: dict[str, set[str]] = defaultdict(set)
         for m, env in self.env.items():
@@ -322,12 +306,10 @@ class Resolver:
                     ext_loc_modules[local].add(m)
         ext_locals = {_ext_local(k) for k in emit_keys if _ext_local(k)}
         guard_names = {s.local_name for mi in self.modules.values() for g in mi.guards for s in g.specs if s.local_name}
-
         group: dict[str, list[Block]] = defaultdict(list)
         for b in kept:
             for n in b.names:
                 group[n].append(b)
-
         taken: set[str] = set(ext_locals) | guard_names
         for name in sorted(group):
             blocks = sorted(group[name], key=lambda x: (x.module.count("."), x.module, x.order))
@@ -375,7 +357,6 @@ class Resolver:
                 self.ext_final[k] = cand
                 logger.info("Import conflict on '{}': aliasing {} as '{}'", loc, k[1:], cand)
 
-    # ---- rewriting
     def _target_name(self, tgt: Target | None, local: str | None) -> str | None:
         if tgt is None:
             return None
@@ -409,7 +390,7 @@ class Resolver:
         out, pos, last_end = [], 0, -1
         for s, e, r in edits:
             if s < last_end:
-                continue  # nested inside an already rewritten range
+                continue
             out.append(b.source[pos:s])
             out.append(r.encode())
             pos = last_end = e
@@ -424,12 +405,10 @@ class Resolver:
             texts = [self._render_block(b) for b in kept]
         return {b.bid: t for b, t in zip(kept, texts)}
 
-    # ---- ordering + output plan
     def _assemble(self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]) -> Plan:
         keyfn = lambda b: (self.mod_idx[b.module], b.order)  # noqa: E731
         body = [b for b in kept if b.kind != MAIN]
         mains = sorted((b for b in kept if b.kind == MAIN), key=keyfn)
-
         deps: dict[int, set[int]] = {b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid} for b in body}
         dependents: dict[int, set[int]] = defaultdict(set)
         for bid, ds in deps.items():
@@ -438,21 +417,17 @@ class Resolver:
         tail = [b for b in body if b.kind == FUNC and b.primary == "main" and not dependents[b.bid]]
         tail_ids = {b.bid for b in tail}
         head = [b for b in body if b.bid not in tail_ids]
-
         ordered = topo_order(head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b)))
         tail_ordered = topo_order(tail, deps, lambda b: 0, keyfn)
-
         rendered = [RenderedBlock(_SECTION[b.kind], b.kind, texts[b.bid]) for b in ordered]
         rendered += [RenderedBlock("entry", b.kind, texts[b.bid]) for b in tail_ordered + mains]
         if len(mains) > 1:
             logger.warning("{} '__main__' guards were kept; use --entry to keep only one", len(mains))
-
         guards: list[str] = []
         for mi in self.modules.values():
             for g in mi.guards:
                 if g.text not in guards:
                     guards.append(g.text)
-
         plan = Plan(
             future_names=sorted(self.future_names),
             imports_text=build_import_section(emit_keys, self.ext_final),

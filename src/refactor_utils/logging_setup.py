@@ -1,10 +1,8 @@
 """loguru configuration."""
 
 from __future__ import annotations
-
 import sys
 from pathlib import Path
-
 from loguru import logger
 
 _FMT = "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"

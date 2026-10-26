@@ -1,7 +1,4 @@
-"""Render a :class:`Plan` into ``_consolidated.py`` and ``__init__.py`` text."""
-
 from __future__ import annotations
-
 from .imports import future_section
 from .resolver import Plan
 
@@ -27,7 +24,6 @@ def render_consolidated(plan: Plan, source_name: str) -> str:
         head.append("\n\n".join(plan.guards))
     if head:
         parts.append("\n\n".join(head))
-
     body: list[str] = []
     prev = None
     for blk in plan.blocks:

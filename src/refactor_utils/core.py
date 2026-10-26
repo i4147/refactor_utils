@@ -1,15 +1,12 @@
 """Orchestration: discover -> parse (parallel) -> resolve -> write."""
 
 from __future__ import annotations
-
 import os
 from concurrent.futures import BrokenExecutor, Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
-
 from loguru import logger
-
 from .discovery import discover
 from .models import ModuleInfo, SourceFile
 from .parser import parse_module_file
@@ -52,7 +49,6 @@ def _parse_all(files: Sequence[SourceFile], workers: int, executor: str) -> dict
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to parse {}", f.path)
         return results
-
     pool_cls = ProcessPoolExecutor if executor == "process" else ThreadPoolExecutor
     try:
         run_pool(pool_cls, files)
@@ -80,12 +76,10 @@ def consolidate(
     if not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
     workers = workers or os.cpu_count() or 1
-
     files = discover(source, exclude=exclude, skip_dirs=[output])
     if not files:
         raise ConsolidationError(f"no python files found under {source}")
     logger.info("Parsing {} files with {} {} worker(s)", len(files), workers, executor)
-
     parsed = _parse_all(files, workers, executor)
     modules: dict[str, ModuleInfo] = {}
     skipped: list[str] = []
@@ -100,12 +94,10 @@ def consolidate(
         modules[name] = info
     if not modules:
         raise ConsolidationError("no module could be parsed")
-
     resolver = Resolver(
         modules, keep_unused_imports=keep_unused_imports, respect_all=respect_all, entry=entry, workers=workers
     )
     plan: Plan = resolver.build()
-
     source_name = source.resolve().name if source.is_dir() else source.name
     mod_text = render_consolidated(plan, source_name)
     init_text = render_init(plan, source_name)
@@ -114,11 +106,9 @@ def consolidate(
             compile(text, fname, "exec")
         except SyntaxError as exc:
             logger.error("Generated {} is not valid python: {} (line {})", fname, exc.msg, exc.lineno)
-
     output.mkdir(parents=True, exist_ok=True)
     targets = [(output / "_consolidated.py", mod_text), (output / "__init__.py", init_text)]
     with ThreadPoolExecutor(max_workers=2) as pool:
         list(pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets))
-
     exports = sum(len(v) for v in plan.exports.values())
     return ConsolidationResult(output, [p for p, _ in targets], len(modules), skipped, exports)

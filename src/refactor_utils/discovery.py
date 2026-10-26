@@ -1,13 +1,10 @@
 """Find the python files of a project and derive their dotted module names."""
 
 from __future__ import annotations
-
 import fnmatch
 from pathlib import Path
 from typing import Iterable
-
 from loguru import logger
-
 from .models import SourceFile
 
 EXCLUDED_DIRS = {
@@ -41,7 +38,6 @@ EXCLUDED_FILE_GLOBS = ("__main__.py", "conftest.py", "test_*.py", "*_test.py", "
 
 
 def detect_base(root: Path) -> Path:
-    """Directory that module names are computed relative to."""
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"

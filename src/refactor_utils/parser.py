@@ -1,18 +1,14 @@
 """tree-sitter based extraction of top-level blocks (runs inside worker processes)."""
 
 from __future__ import annotations
-
 import re
 import threading
 from pathlib import Path
-
 import tree_sitter_python as _tspy
 from tree_sitter import Language, Node, Parser
-
 from .models import CLASS, CONST, FUNC, MAIN, MISC, Block, GuardBlock, ImportSpec, ModuleInfo, Occ
 
 _LOCAL = threading.local()
-
 _MAIN_RE = re.compile(r"""^\s*(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)\s*$""")
 _TC_NAMES = {"TYPE_CHECKING", "typing.TYPE_CHECKING", "t.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"}
 _COMPOUND = {"if_statement", "try_statement", "with_statement", "for_statement", "while_statement", "match_statement"}
@@ -33,7 +29,6 @@ def _t(node: Node | None) -> str:
     return node.text.decode("utf-8", "replace") if node is not None else ""
 
 
-# --------------------------------------------------------------------------- imports
 def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
     parts = current.split(".") if is_pkg else current.split(".")[:-1]
     strip = level - 1
@@ -50,7 +45,6 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
             else:
                 specs.append(ImportSpec(_t(ch)))
         return specs
-
     relative = False
     mod_node = node.child_by_field_name("module_name")
     if node.type == "future_import_statement":
@@ -63,7 +57,6 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
         relative = True
     else:
         mod = _t(mod_node)
-
     if any(c.type == "wildcard_import" for c in node.children):
         return [ImportSpec(mod, is_from=True, star=True, relative=relative)]
     for ch in node.children_by_field_name("name"):
@@ -76,7 +69,6 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
     return specs
 
 
-# --------------------------------------------------------------------------- helpers
 def _dotted(node: Node | None) -> str | None:
     if node is None:
         return None
@@ -114,7 +106,6 @@ def _param_names(params: Node | None) -> set[str]:
 
 
 def _push_param_exprs(stack: list, params: Node | None, lazy: bool, shadow: frozenset[str]) -> None:
-    """Default values and annotations are evaluated in the *enclosing* scope."""
     if params is None:
         return
     for ch in params.named_children:
@@ -210,14 +201,13 @@ def _scan(node: Node) -> tuple[list[Node], bool]:
 
 
 def _extent(node: Node) -> tuple[int, int]:
-    """Node byte range widened to adjacent leading / same-line trailing comments."""
     start, end = node.start_byte, node.end_byte
     row = node.start_point[0]
     prev = node.prev_sibling
     while prev is not None and prev.type == "comment" and prev.end_point[0] + 1 == row:
         before = prev.prev_sibling
         if before is not None and before.end_point[0] == prev.start_point[0]:
-            break  # trailing comment of the previous statement
+            break
         start, row = prev.start_byte, prev.start_point[0]
         prev = prev.prev_sibling
     nxt = node.next_sibling
@@ -236,18 +226,15 @@ def _first_error_line(root: Node) -> int:
     return 0
 
 
-# --------------------------------------------------------------------------- occurrences
 def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info: ModuleInfo) -> list[Occ]:
     occs: list[Occ] = []
     own_id = own_def.id if own_def is not None else None
     future = info.future_annotations
     warned_file = False
     stack: list[tuple[Node, bool, frozenset[str], bool]] = [(root, False, frozenset(), False)]
-
     while stack:
         node, lazy, shadow, cls = stack.pop()
         t = node.type
-
         if t == "identifier":
             name = _t(node)
             if name in shadow:
@@ -257,7 +244,6 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
                 warned_file = True
             occs.append(Occ(node.start_byte - base, node.end_byte - base, name, "name", not lazy))
             continue
-
         if t == "attribute":
             obj = node.child_by_field_name("object")
             chain = _dotted(obj)
@@ -275,13 +261,11 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
             if obj is not None:
                 stack.append((obj, lazy, shadow, False))
             continue
-
         if t == "keyword_argument":
             value = node.child_by_field_name("value")
             if value is not None:
                 stack.append((value, lazy, shadow, False))
             continue
-
         if t in _IMPORT_TYPES:
             specs = tuple(parse_import(node, info.module, info.is_pkg))
             ls = src.rfind(b"\n", 0, node.start_byte) + 1
@@ -290,7 +274,6 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
                 indent = ""
             occs.append(Occ(node.start_byte - base, node.end_byte - base, "", "nested_import", not lazy, indent, specs))
             continue
-
         if t == "function_definition":
             name_node = node.child_by_field_name("name")
             if name_node is not None and node.id == own_id:
@@ -306,7 +289,6 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
             if body is not None:
                 stack.append((body, True, inner, False))
             continue
-
         if t == "lambda":
             params = node.child_by_field_name("parameters")
             inner = shadow | _param_names(params)
@@ -315,7 +297,6 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
             if body is not None:
                 stack.append((body, True, inner, False))
             continue
-
         if t == "class_definition":
             name_node = node.child_by_field_name("name")
             if name_node is not None and node.id == own_id:
@@ -328,9 +309,7 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
             if body is not None:
                 stack.append((body, lazy, shadow, True))
             continue
-
         if cls and t == "block":
-            # class-level ``x = ...`` defines an attribute, not a module-level name
             for ch in node.named_children:
                 if ch.type == "expression_statement" and ch.named_children:
                     inner_stmt = ch.named_children[0]
@@ -345,14 +324,12 @@ def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info:
                         continue
                 stack.append((ch, lazy, shadow, False))
             continue
-
         child_lazy = True if (t == "type" and future) else lazy
         for ch in node.named_children:
             stack.append((ch, child_lazy, shadow, False))
     return occs
 
 
-# --------------------------------------------------------------------------- driver
 def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     info.future_annotations = any(
         n.type == "future_import_statement" and b"annotations" in n.text for n in root.named_children
@@ -379,7 +356,6 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
         if t == "comment":
             continue
         is_first, first = first, False
-
         if t in _IMPORT_TYPES:
             info.imports.extend(parse_import(n, info.module, info.is_pkg))
         elif t in _DEF_TYPES:
@@ -389,7 +365,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
         elif t == "expression_statement":
             e = n.named_children[0] if n.named_children else None
             if e is None or (is_first and e.type == "string"):
-                continue  # module docstring
+                continue
             if e.type in ("assignment", "augmented_assignment"):
                 names = _target_names(e)
                 if names == ["__all__"]:
@@ -427,7 +403,6 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
 
 
 def parse_module_file(path_str: str, module: str, is_pkg: bool) -> ModuleInfo:
-    """Parse one file. Never raises: problems are reported through ``info.errors``."""
     info = ModuleInfo(module=module, path=path_str, is_pkg=is_pkg)
     try:
         src = Path(path_str).read_bytes()

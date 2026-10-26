@@ -1,13 +1,10 @@
 """Dependency-aware ordering of blocks."""
 
 from __future__ import annotations
-
 import heapq
 from collections import defaultdict
 from typing import Callable, Mapping, Sequence
-
 from loguru import logger
-
 from .models import Block
 
 
@@ -17,19 +14,12 @@ def topo_order(
     rank: Callable[[Block], int],
     key: Callable[[Block], tuple],
 ) -> list[Block]:
-    """Topological sort that prefers to *stay in the current section* (rank).
-
-    Sections are emitted lowest rank first (constants, classes, functions) but a block
-    is only emitted once everything it needs at import time has been emitted. Cycles
-    are broken (with a warning) on the block with the fewest unmet dependencies.
-    """
     by_id = {b.bid: b for b in nodes}
     pending = {b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid} for b in nodes}
     dependents: dict[int, list[int]] = defaultdict(list)
     for bid, ds in pending.items():
         for d in ds:
             dependents[d].append(bid)
-
     heaps: dict[int, list] = defaultdict(list)
     queued: set[int] = set()
     done: set[int] = set()
@@ -43,7 +33,6 @@ def topo_order(
     for bid, ds in pending.items():
         if not ds:
             push(bid)
-
     cur = 0
     while len(done) < len(nodes):
         ranks = [r for r, h in heaps.items() if h]

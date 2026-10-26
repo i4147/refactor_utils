@@ -1,13 +1,8 @@
-"""Command line interface: ``pyrefactor``."""
-
 from __future__ import annotations
-
 import argparse
 import sys
 from pathlib import Path
-
 from loguru import logger
-
 from . import __version__
 from .core import ConsolidationError, consolidate
 from .logging_setup import setup_logging
