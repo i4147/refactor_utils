@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 import ast
+import io
 import re
 import threading
+import tokenize
 from pathlib import Path
 import tree_sitter_python as _tspy
 from tree_sitter import Language, Node, Parser
@@ -40,7 +42,13 @@ _COMPOUND = {
 }
 _IMPORT_TYPES = {"import_statement", "import_from_statement", "future_import_statement"}
 _DEF_TYPES = {"function_definition", "class_definition", "decorated_definition"}
-_STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
+_COMPREHENSIONS = {
+    "list_comprehension",
+    "set_comprehension",
+    "dictionary_comprehension",
+    "generator_expression",
+}
+_CODING_COOKIE_RE = re.compile(r"(coding[:=]\s*)[-\w.]+")
 # Dynamic & metaprogramming detection patterns
 _DYNAMIC_PATTERNS = {
     "importlib": re.compile(r"\bimportlib\b"),
@@ -76,6 +84,21 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
 
 
 def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
+    """Convert an import statement node into :class:`ImportSpec` objects.
+
+    Relative imports are resolved against ``module`` so downstream code only
+    ever deals with absolute module names.
+
+    Args:
+        node: ``import_statement``, ``import_from_statement`` or
+            ``future_import_statement`` node.
+        module: Dotted name of the module the statement appears in.
+        is_pkg: Whether that module is a package ``__init__``.
+
+    Returns:
+        One specification per imported name (or a single star specification).
+
+    """
     specs: list[ImportSpec] = []
     if node.type == "import_statement":
         for ch in node.children_by_field_name("name"):
@@ -129,6 +152,19 @@ def _dotted(node: Node | None) -> str | None:
 
 
 def _binding_names(node: Node | None) -> set[str]:
+    """Collect the identifier names bound by a parameter or target pattern.
+
+    Handles plain identifiers, defaulted/annotated parameters and the tuple,
+    list and splat patterns that may appear in ``with ... as``, ``for`` and
+    ``match`` construct positions.
+
+    Args:
+        node: Pattern or parameter node to inspect.
+
+    Returns:
+        The set of names bound by ``node`` (empty for non-binding nodes).
+
+    """
     if node is None:
         return set()
     t = node.type
@@ -142,6 +178,11 @@ def _binding_names(node: Node | None) -> set[str]:
         "dictionary_splat_pattern",
         "tuple_pattern",
         "list_pattern",
+        "tuple",
+        "list",
+        "pattern_list",
+        "typed_pattern",
+        "parenthesized_expression",
     ):
         out: set[str] = set()
         for ch in node.named_children:
@@ -149,6 +190,105 @@ def _binding_names(node: Node | None) -> set[str]:
                 out |= _binding_names(ch)
         return out
     return set()
+
+
+def _as_bindings(node: Node | None) -> set[str]:
+    """Collect names bound by every ``as`` pattern inside ``node``.
+
+    Args:
+        node: A ``with_item``/``with_clause``/``except_clause`` subtree.
+
+    Returns:
+        Names introduced by ``as`` clauses (empty when there is none).
+
+    """
+    names: set[str] = set()
+    if node is None:
+        return names
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if cur.type == "as_pattern":
+            for ch in cur.named_children:
+                if ch.type == "as_pattern_target":
+                    names |= _binding_names(ch)
+                elif ch.type not in ("identifier",):
+                    stack.append(ch)
+            continue
+        stack.extend(cur.named_children)
+    return names
+
+
+def _pattern_scan(node: Node | None, refs: list[Node], bound: set[str]) -> None:
+    """Split a ``match`` pattern into referenced nodes and bound names.
+
+    Bare names in a ``match`` pattern *bind* (capture), whereas dotted names
+    and the class name of a class pattern *refer* to existing objects. The
+    resolver must therefore rewrite the references but never the captures.
+
+    Args:
+        node: Pattern node to inspect (``case_pattern`` and friends).
+        refs: Output list, appended with nodes that are name references.
+        bound: Output set, updated with the names captured by the pattern.
+
+    """
+    if node is None:
+        return
+    t = node.type
+    if t == "dotted_name":
+        text = _t(node)
+        if "." in text:
+            first = node.named_children[0] if node.named_children else node
+            refs.append(first)
+        else:
+            bound.add(text)
+        return
+    if t == "class_pattern":
+        cls = next((c for c in node.named_children if c.type == "dotted_name"), None)
+        if cls is not None:
+            refs.append(cls.named_children[0] if cls.named_children else cls)
+        for ch in node.named_children:
+            if ch is not cls:
+                _pattern_scan(ch, refs, bound)
+        return
+    if t == "keyword_pattern":
+        # ``Point(x=px)``: ``x`` is an attribute name, ``px`` a sub-pattern.
+        for ch in node.named_children[1:]:
+            _pattern_scan(ch, refs, bound)
+        return
+    if t == "splat_pattern":
+        for ch in node.named_children:
+            if ch.type == "identifier":
+                bound.add(_t(ch))
+        return
+    if t == "as_pattern":
+        for ch in node.named_children:
+            if ch.type == "identifier":
+                bound.add(_t(ch))
+            elif ch.type != "as_pattern_target":
+                _pattern_scan(ch, refs, bound)
+        return
+    for ch in node.named_children:
+        _pattern_scan(ch, refs, bound)
+
+
+def _comprehension_bindings(node: Node) -> set[str]:
+    """Collect names local to a comprehension or generator expression.
+
+    Args:
+        node: A comprehension node as listed in ``_COMPREHENSIONS``.
+
+    Returns:
+        Names bound by ``for`` clauses and by walrus expressions inside it.
+
+    """
+    names: set[str] = set()
+    for ch in node.named_children:
+        if ch.type == "for_in_clause":
+            names |= _binding_names(ch.child_by_field_name("left"))
+        elif ch.type == "named_expression" and ch.named_children:
+            names |= _binding_names(ch.named_children[0])
+    return names
 
 
 def _param_names(params: Node | None) -> set[str]:
@@ -310,7 +450,25 @@ def _detect_dynamic_patterns(text: str, info: ModuleInfo) -> None:
                 )
 
 
+_PICKLE_RE = re.compile(r"\b(pickle|dill|cloudpickle|shelve|marshal)\b")
+_LOGGER_RE = re.compile(r"\bgetLogger\s*\(\s*__name__\s*\)")
+_FILE_PARENT_RE = re.compile(
+    r"(__file__\s*\)\s*\.parent|Path\s*\(\s*__file__\s*\)|dirname\s*\(\s*__file__\s*\))"
+)
+
+
 def _detect_runtime_semantics(text: str, info: ModuleInfo) -> None:
+    """Warn about module-level runtime semantics that consolidation changes.
+
+    Flags ``__name__``/``__package__``/``__path__`` usage, ``__file__`` based
+    resource loading, per-module logger names and serialization of
+    module-level objects (pickle changes ``__module__``).
+
+    Args:
+        text: Full decoded module source.
+        info: Module being parsed; warnings are appended to it.
+
+    """
     # __file__, __name__, __package__, __path__, resource loading
     for sym in ("__file__", "__name__", "__package__", "__path__"):
         if sym in text:
@@ -327,6 +485,28 @@ def _detect_runtime_semantics(text: str, info: ModuleInfo) -> None:
     ):
         info.warnings.append(
             f"{info.module}: does resource loading relative to __file__ — verify output handles bundled resources"
+        )
+    if _FILE_PARENT_RE.search(text):
+        info.warnings.append(
+            f"{info.module}: resolves paths relative to __file__ — after consolidation "
+            "__file__ points at the output file, so these paths must be adjusted "
+            "(use --copy-data and rewrite the path, or keep the module layout)"
+        )
+    if _LOGGER_RE.search(text):
+        info.warnings.append(
+            f"{info.module}: logging.getLogger(__name__) — __name__ becomes "
+            "'_consolidated' for every block, so the logger hierarchy collapses"
+        )
+    if _PICKLE_RE.search(text):
+        info.warnings.append(
+            f"{info.module}: pickles/serializes module objects — __module__ and "
+            "__qualname__ change after consolidation, so previously pickled "
+            "artifacts will not unpickle"
+        )
+    if re.search(r"\bmultiprocessing\b", text) and "spawn" in text:
+        info.warnings.append(
+            f"{info.module}: uses multiprocessing spawn — entry-point and "
+            "__main__ semantics differ in the consolidated file"
         )
 
 
@@ -383,6 +563,29 @@ def _strip_comments_from_source(src: bytes) -> bytes:
 def _collect_occs(
     root: Node, base: int, src: bytes, own_def: Node | None, info: ModuleInfo
 ) -> list[Occ]:
+    """Collect every renameable occurrence and nested import of a block.
+
+    Walks the block's subtree and records identifier/attribute references as
+    :class:`Occ` objects with offsets relative to the block start. Scope
+    bindings are tracked so that locally bound names (parameters, ``for``
+    targets, ``with``/``except`` aliases, ``match`` captures and comprehension
+    variables) are never confused with module-level objects of the same name.
+
+    Args:
+        root: Root node of the block (the top-level statement).
+        base: Byte offset of the block inside ``src``; occurrences are stored
+            relative to it.
+        src: The complete module source the block was sliced from.
+        own_def: The ``def``/``class`` node whose name belongs to the block, so
+            that only the block's own definition name is treated as a
+            reference (decorated definitions wrap it).
+        info: Module being parsed; warnings are appended to it.
+
+    Returns:
+        Occurrences in traversal order, including ``nested_import`` markers
+        that carry the import specifications found inside the block.
+
+    """
     occs: list[Occ] = []
     own_id = own_def.id if own_def is not None else None
     future = info.future_annotations
@@ -484,6 +687,69 @@ def _collect_occs(
             if body is not None:
                 stack.append((body, lazy, shadow, True))
             continue
+        if t == "as_pattern":
+            # ``with ... as target`` / ``except E as target``: the target binds.
+            for ch in node.named_children:
+                if ch.type != "as_pattern_target":
+                    stack.append((ch, lazy, shadow, False))
+            continue
+        if t == "with_statement":
+            body = node.child_by_field_name("body")
+            clause = next(
+                (c for c in node.named_children if c.type == "with_clause"), None
+            )
+            bound = _as_bindings(clause)
+            if clause is not None:
+                stack.append((clause, lazy, shadow, False))
+            if body is not None:
+                stack.append((body, lazy, shadow | bound, False))
+            continue
+        if t == "except_clause":
+            bound = _as_bindings(node)
+            for ch in node.named_children:
+                if ch.type == "block":
+                    stack.append((ch, lazy, shadow | bound, False))
+                elif ch.type == "as_pattern":
+                    for sub in ch.named_children:
+                        if sub.type != "as_pattern_target":
+                            stack.append((sub, lazy, shadow, False))
+                else:
+                    stack.append((ch, lazy, shadow, False))
+            continue
+        if t == "for_statement":
+            left = node.child_by_field_name("left")
+            right = node.child_by_field_name("right")
+            body = node.child_by_field_name("body")
+            bound = _binding_names(left)
+            if right is not None:
+                stack.append((right, lazy, shadow, False))
+            if body is not None:
+                stack.append((body, lazy, shadow | bound, False))
+            continue
+        if t == "case_clause":
+            pattern = next(
+                (c for c in node.named_children if c.type == "case_pattern"), None
+            )
+            refs: list[Node] = []
+            bound: set[str] = set()
+            _pattern_scan(pattern, refs, bound)
+            for ref in refs:
+                stack.append((ref, lazy, shadow, False))
+            for ch in node.named_children:
+                if ch is pattern:
+                    continue
+                stack.append((ch, lazy, shadow | bound, False))
+            continue
+        if t in _COMPREHENSIONS:
+            inner = shadow | _comprehension_bindings(node)
+            for ch in node.named_children:
+                if ch.type == "for_in_clause":
+                    right = ch.child_by_field_name("right")
+                    if right is not None:
+                        stack.append((right, lazy, inner, False))
+                    continue
+                stack.append((ch, lazy, inner, False))
+            continue
         if cls and t == "block":
             for ch in node.named_children:
                 if ch.type == "expression_statement" and ch.named_children:
@@ -505,14 +771,154 @@ def _collect_occs(
     return occs
 
 
-def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
-    info.future_annotations = any(
-        n.type == "future_import_statement" and b"annotations" in n.text
-        for n in root.named_children
+def _literal_str_list(node: Node | None) -> list[str] | None:
+    """Evaluate a node as a literal list/tuple/set of strings.
+
+    ``__all__`` is parsed through :func:`ast.literal_eval` rather than a
+    regular expression so that unicode identifiers are accepted and dynamic
+    expressions (``["a"] + other``) are reported instead of silently
+    mis-parsed.
+
+    Args:
+        node: The right-hand side of an ``__all__`` assignment.
+
+    Returns:
+        The literal entries, or ``None`` when the node is not a literal
+        list/tuple/set made only of strings.
+
+    """
+    if node is None:
+        return None
+    try:
+        value = ast.literal_eval(_t(node))
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
+        return None
+    if isinstance(value, (list, tuple, set, frozenset)) and all(
+        isinstance(item, str) for item in value
+    ):
+        return list(value)
+    return None
+
+
+def _handle_all_statement(node: Node, info: ModuleInfo) -> bool:
+    """Record an ``__all__`` definition or mutation on ``info``.
+
+    ``__all__ = [...]`` *replaces* the export list while ``__all__ += [...]``
+    and ``__all__.append()/extend()`` *append* to it. Treating every
+    assignment as an append silently produced a wrong export list.
+
+    Args:
+        node: A top-level expression node (assignment or call).
+        info: Module being parsed; ``declared_all`` is updated in place.
+
+    Returns:
+        ``True`` when the statement was an ``__all__`` definition or mutation
+        and must therefore not become a regular source block.
+
+    """
+    if node.type in ("assignment", "augmented_assignment"):
+        left = node.child_by_field_name("left")
+        if left is None or _t(left) != "__all__":
+            return False
+        entries = _literal_str_list(node.child_by_field_name("right"))
+        if entries is None:
+            info.warnings.append(
+                f"{info.module}: __all__ is not a literal list/tuple/set of strings "
+                "— static analysis may be incomplete"
+            )
+            return True
+        if node.type == "assignment":
+            info.declared_all = entries
+        else:
+            info.declared_all = (info.declared_all or []) + entries
+        return True
+    if node.type != "call":
+        return False
+    func = node.child_by_field_name("function")
+    if func is None or func.type != "attribute":
+        return False
+    if _t(func.child_by_field_name("object")) != "__all__":
+        return False
+    method = _t(func.child_by_field_name("attribute"))
+    arguments = node.child_by_field_name("arguments")
+    entry_node = (
+        arguments.named_children[0]
+        if (arguments is not None and arguments.named_children)
+        else None
     )
+    entries: list[str] | None
+    if method == "append":
+        entries = _literal_str_list(None if entry_node is None else entry_node)
+        if entries is not None and len(entries) != 1:
+            entries = None
+        if entries is None and entry_node is not None:
+            try:
+                literal = ast.literal_eval(_t(entry_node))
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                literal = None
+            entries = [literal] if isinstance(literal, str) else None
+    elif method == "extend":
+        entries = _literal_str_list(entry_node)
+    else:
+        entries = None
+    info.warnings.append(
+        f"{info.module}: __all__.{method}() mutation — merged statically, "
+        "verify the exported name list"
+    )
+    if entries:
+        info.declared_all = (info.declared_all or []) + entries
+    return True
+
+
+def _guard_from_node(node: Node, src: bytes, info: ModuleInfo) -> GuardBlock:
+    """Build a :class:`GuardBlock` for a conditional import statement.
+
+    Args:
+        node: The ``if``/``try`` statement to keep verbatim.
+        src: Module source the node belongs to.
+        info: Module being parsed, used to parse the guarded imports.
+
+    Returns:
+        A guard block whose ``specs`` describe the imports it contains.
+
+    """
+    start, end = _extent(node)
+    imports, _ = _scan(node)
+    specs: list[ImportSpec] = []
+    spec_lines: list[tuple[ImportSpec, str]] = []
+    for imp in imports:
+        text = _t(imp)
+        for spec in parse_import(imp, info.module, info.is_pkg):
+            specs.append(spec)
+            spec_lines.append((spec, text))
+    return GuardBlock(
+        src[start:end].decode("utf-8", "replace"), specs, spec_lines=spec_lines
+    )
+
+
+def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
+    """Populate ``info`` with blocks, imports, guards and ``__all__``.
+
+    Args:
+        info: Module metadata to fill in (mutated in place).
+        root: tree-sitter root node of the module.
+        src: Raw module source (already decoded/re-encoded as needed).
+
+    """
+    futures: list[str] = []
+    for n in root.named_children:
+        if n.type != "future_import_statement":
+            continue
+        for ch in n.children_by_field_name("name"):
+            name = _t(ch)
+            if name and name not in futures:
+                futures.append(name)
+    info.future_names = futures
+    info.future_annotations = "annotations" in futures
     by_name: dict[str, Block] = {}
 
     def add(kind: str, names: list[str], node: Node, own: Node | None = None) -> None:
+        """Append a block, merging it into an existing block of the same name."""
         start, end = _extent(node)
         # Capture original location for source_map
         start_line = node.start_point[0] + 1
@@ -556,19 +962,20 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             e = n.named_children[0] if n.named_children else None
             if e is None or (is_first and e.type == "string"):
                 continue
+            if _handle_all_statement(e, info):
+                continue
             if e.type in ("assignment", "augmented_assignment"):
                 names = _target_names(e)
                 if names == ["__all__"]:
-                    info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                        _t(e.child_by_field_name("right"))
-                    )
+                    # Unreachable safety net: __all__ is never emitted as a block.
                     continue
-                # Warn on computed/mutated __all__
-                if names and any(n.startswith("__all__") for n in names):
-                    # e.g., __all__ += [...], __all__.append(...)
+                if names and "__all__" in names:
+                    # Never emit an __all__ binding into the consolidated file;
+                    # only the generated __init__.py should define it.
                     info.warnings.append(
-                        f"{info.module}: computed or mutated __all__ — static analysis may be incomplete"
+                        f"{info.module}: __all__ assignment target skipped in output"
                     )
+                    names = [name for name in names if name != "__all__"]
                 if names:
                     add(CONST, names, n)
                     continue
@@ -582,12 +989,15 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     add(MAIN, [], n)
                     continue
                 if cond in _TC_NAMES:
-                    body = n.child_by_field_name("consequence")
-                    for ch in body.named_children if body is not None else []:
-                        if ch.type in _IMPORT_TYPES:
-                            info.imports.extend(
-                                parse_import(ch, info.module, info.is_pkg)
-                            )
+                    # Keep non-import statements (type aliases, Protocol stubs,
+                    # TypeVar definitions, ...) instead of dropping them.
+                    for ch in _scan(n)[0]:
+                        info.imports.extend(parse_import(ch, info.module, info.is_pkg))
+                    info.guards.append(_guard_from_node(n, src, info))
+                    info.warnings.append(
+                        f"{info.module}: TYPE_CHECKING block kept verbatim "
+                        "(it may contain non-import declarations)"
+                    )
                     continue
                 # Detect conditional/platform/optional imports
                 if (
@@ -600,15 +1010,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     )
             imports, has_def = _scan(n)
             if imports and not has_def:
-                start, end = _extent(n)
-                specs = [
-                    s
-                    for imp in imports
-                    for s in parse_import(imp, info.module, info.is_pkg)
-                ]
-                info.guards.append(
-                    GuardBlock(src[start:end].decode("utf-8", "replace"), specs)
-                )
+                info.guards.append(_guard_from_node(n, src, info))
             else:
                 add(MISC, _bound_names(n), n)
         elif t == "pass_statement":
@@ -632,6 +1034,26 @@ def parse_module_file(
     keep_comments: bool = True,
     allow_syntax_errors: bool = False,
 ) -> ModuleInfo:
+    """Parse one python file into a :class:`ModuleInfo`.
+
+    Reads the file honouring PEP 263 encoding cookies, re-encodes the text as
+    utf-8 (so byte offsets stay consistent), extracts blocks, imports, guards
+    and ``__all__``, and collects warnings. Failures are reported through
+    ``ModuleInfo.errors`` rather than raised, so a worker never crashes.
+
+    Args:
+        path_str: Path to the file to parse.
+        module: Dotted module name the file maps to.
+        is_pkg: Whether the file is a package ``__init__.py``.
+        keep_docstrings: Keep docstrings in the extracted block sources.
+        strip_comments: Remove standalone comment lines from blocks.
+        keep_comments: Keep comments at all.
+        allow_syntax_errors: Extract what is possible from a broken file.
+
+    Returns:
+        The parsed module, with ``errors`` populated when parsing failed.
+
+    """
     info = ModuleInfo(module=module, path=path_str, is_pkg=is_pkg)
     try:
         src = Path(path_str).read_bytes()
@@ -640,20 +1062,38 @@ def parse_module_file(
         return info
     if src.startswith(b"\xef\xbb\xbf"):
         src = src[3:]
-    # Handle encoding/BOM/CRLF/tabs/shebang/encoding cookies
-    # BOM already stripped; detect encoding cookie (PEP 263) but we read as bytes and decode as utf-8 replace
-    # CRLF normalization is handled during rendering; keep original for fidelity
-    # Check for non-UTF8: if decode fails, log warning but continue with replace
+    # Honour PEP 263 encoding cookies instead of assuming utf-8, and re-encode
+    # the decoded text as utf-8 so byte offsets stay consistent downstream.
+    encoding = "utf-8"
     try:
-        text_probe = src.decode("utf-8")
-        if "\r" in text_probe:
-            info.warnings.append(
-                f"{path_str}: contains CRLF line endings — normalized to LF in output"
-            )
-    except UnicodeDecodeError:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(src).readline)
+    except (SyntaxError, LookupError):
         info.warnings.append(
-            f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters"
+            f"{path_str}: could not detect source encoding — assuming utf-8"
         )
+    info.encoding = encoding
+    try:
+        decoded = src.decode(encoding)
+    except (UnicodeDecodeError, LookupError):
+        decoded = src.decode(encoding, "replace")
+        info.warnings.append(
+            f"{path_str}: could not decode as {encoding} — replacement characters inserted"
+        )
+    if encoding.lower().replace("_", "-") not in ("utf-8", "utf8"):
+        info.warnings.append(
+            f"{path_str}: source encoding is {encoding} — output is written as utf-8"
+        )
+        # The stale PEP 263 cookie would make the (now utf-8) output invalid.
+        lines = decoded.splitlines(keepends=True)
+        for index in range(min(2, len(lines))):
+            if _CODING_COOKIE_RE.search(lines[index]):
+                lines[index] = _CODING_COOKIE_RE.sub(r"\1utf-8", lines[index], count=1)
+        decoded = "".join(lines)
+    if "\r" in decoded:
+        info.warnings.append(
+            f"{path_str}: contains CRLF line endings — normalized per --eol in output"
+        )
+    src = decoded.encode("utf-8")
     try:
         root = _get_parser().parse(src).root_node
         if root.has_error:
@@ -694,6 +1134,8 @@ def parse_module_file(
         if strip_comments or not keep_comments:
             for b in info.blocks:
                 b.source = _strip_comments_from_source(b.source)
-    except Exception as exc:  # noqa: BLE001 - reported to the caller, never crashes a worker
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - reported to the caller, never crashes a worker
         info.errors.append(f"{path_str}: extraction failed: {exc!r}")
     return info

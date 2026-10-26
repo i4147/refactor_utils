@@ -19,7 +19,7 @@ from loguru import logger
 from .discovery import discover, discover_data_files, detect_pyproject_config
 from .models import ModuleInfo, SourceFile
 from .parser import parse_module_file
-from .resolver import Plan, Resolver
+from .resolver import Plan, Resolver, ResolverError
 from .writer import (
     render_consolidated,
     render_init,
@@ -31,11 +31,33 @@ from .writer import (
 
 
 class ConsolidationError(RuntimeError):
-    pass
+    """Raised when a consolidation run cannot produce trustworthy output.
+
+    This is the only exception the CLI maps to a dedicated exit code, so all
+    user-facing failures (bad input, unsafe plan, failed ``--check``) use it.
+    """
 
 
 @dataclass
 class ConsolidationResult:
+    """Summary of a completed (or dry-run) consolidation.
+
+    Attributes:
+        output_dir: Directory (or file, in module mode) that was written to.
+        files: Files that were written.
+        modules: Number of modules that contributed to the output.
+        skipped: Paths of files that could not be parsed.
+        exports: Number of names exported by the generated ``__init__.py``.
+        warnings: Warnings collected from the parser and the resolver.
+        diff: Unified diff produced by ``--diff``/``--check``.
+        stdout_text: Content that was printed instead of written (``--stdout``).
+        copied_data_files: Data files copied next to the output.
+        validated: Whether ``--validate`` passed.
+        dry_run: Whether files were written.
+        plan: The underlying plan, for ``--dry-run`` introspection.
+
+    """
+
     output_dir: Path
     files: list[Path]
     modules: int
@@ -49,6 +71,56 @@ class ConsolidationResult:
     validated: bool = False
     dry_run: bool = False
     plan: Plan | None = None  # for --dry-run introspection
+
+
+#: Warnings that mean the generated output may be wrong; ``--strict`` refuses to
+#: write it. Dynamic name lookups and incomplete export lists cannot be verified
+#: statically, so shipping them silently is the risky option.
+_STRICT_WARNING_MARKERS = (
+    "name resolution may be incomplete",
+    "__all__ is not a literal",
+    "mutation — merged statically",
+    "cannot resolve internal import",
+)
+
+
+def _apply_eol(text: str, eol: str) -> str:
+    """Normalize line endings in generated source.
+
+    Args:
+        text: Generated source text.
+        eol: ``"lf"``, ``"crlf"`` or ``"preserve"`` (preserve leaves the text
+            untouched; callers resolve it beforehand).
+
+    Returns:
+        ``text`` with the requested line endings.
+
+    """
+    unified = text.replace("\r\n", "\n").replace("\r", "\n")
+    if eol == "crlf":
+        return unified.replace("\n", "\r\n")
+    return unified
+
+
+def _detect_eol(files: Sequence[SourceFile]) -> str:
+    """Detect the dominant line ending of the input files.
+
+    Args:
+        files: Discovered source files.
+
+    Returns:
+        ``"crlf"`` when CRLF endings dominate, otherwise ``"lf"``.
+
+    """
+    crlf = lf = 0
+    for f in files:
+        try:
+            sample = Path(f.path).read_bytes()[:8192]
+        except OSError:
+            continue
+        crlf += sample.count(b"\r\n")
+        lf += sample.count(b"\n") - crlf
+    return "crlf" if crlf > lf else "lf"
 
 
 def _parse_worker(args: tuple) -> tuple[str, ModuleInfo]:
@@ -249,10 +321,76 @@ def consolidate(
     entry_keep_all: bool = False,
     main_name: str | None = None,
     generate_guard: bool = False,
+    strict: bool = False,
+    eol: str = "lf",
 ) -> ConsolidationResult:
+    """Consolidate a python module, package or project into fewer files.
+
+    Discovery, parsing (optionally parallel), cross-module resolution, rendering
+    and validation all happen here; the CLI is a thin wrapper around this
+    function.
+
+    Args:
+        source: File or directory to consolidate.
+        output: Destination directory (or ``.py`` file in module mode).
+        mode: Output layout: ``single``, ``package``, ``module``, ``flat`` or
+            ``split``.
+        workers: Number of parsing workers; defaults to the CPU count.
+        executor: ``"process"`` or ``"thread"`` pool for parsing.
+        exclude: Additional glob patterns to skip.
+        include: Glob patterns that re-include otherwise excluded files.
+        keep_unused_imports: Deprecated alias for ``imports_mode="keep"``.
+        respect_all: Deprecated alias for ``all_mode="respect"``.
+        entry: Modules whose ``__main__`` guard should be kept.
+        dry_run: Print the plan without writing files.
+        check: Fail when the output would change (or does not exist yet).
+        stdout: Write the generated source to stdout instead of files.
+        config: Explicit ``pyproject.toml`` to read ``[tool.pyrefactor]`` from.
+        do_format: Run black/ruff over the generated files.
+        formatter: Formatter to use with ``do_format``.
+        diff: Emit a unified diff against the existing output.
+        overwrite: Allow overwriting a non-empty output directory.
+        force: Alias for ``overwrite``.
+        keep_docstrings: Keep docstrings in the output.
+        strip_comments: Drop standalone comment lines.
+        keep_comments: Keep comments at all.
+        rename_strategy: Collision policy: ``prefix``, ``suffix``,
+            ``module_path`` or ``error``.
+        dedupe: Duplicate removal: ``none``, ``safe`` or ``aggressive``.
+        imports_mode: Import handling: ``prune``, ``keep`` or ``strict``.
+        all_mode: ``__all__`` handling: ``ignore``, ``respect``, ``merge`` or
+            ``recompute``.
+        namespace: Emit module namespace comments.
+        preserve_modules: Emit per-block origin comments.
+        source_map: Emit ``file:line`` comments per block.
+        fail_on_warning: Fail when any warning was emitted.
+        max_skipped: Fail when more than this many files had to be skipped.
+        allow_syntax_errors: Parse files with syntax errors partially.
+        no_parallel: Force single-process parsing.
+        progress: Show a tqdm progress bar while parsing.
+        validate: Compile (and optionally import) the generated files.
+        validate_import: With ``validate``, also import the generated module.
+        copy_data: Copy non-python data files next to the output.
+        data_glob: Only copy data files matching these globs.
+        entry_keep_all: Keep every ``__main__`` guard.
+        main_name: Rename ``main`` to this name.
+        generate_guard: Synthesize a ``__main__`` guard when none exists.
+        strict: Promote risky warnings and import cycles to hard errors.
+        eol: Line endings for generated files: ``lf``, ``crlf`` or ``preserve``.
+
+    Returns:
+        A :class:`ConsolidationResult` describing what was (or would be) written.
+
+    Raises:
+        ConsolidationError: When the input cannot be parsed, the plan cannot be
+            built safely, or a requested check/validation fails.
+
+    """
     # Normalize mode aliases
     if mode not in ("single", "package", "module", "flat", "split"):
         raise ConsolidationError(f"unknown mode {mode!r}")
+    if eol not in ("lf", "crlf", "preserve"):
+        raise ConsolidationError(f"unknown eol {eol!r}")
     # Handle --no-parallel
     if no_parallel:
         workers = 1
@@ -300,11 +438,18 @@ def consolidate(
     source, output = Path(source), Path(output)
     if not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
+    if mode != "module" and output.exists() and not output.is_dir():
+        raise ConsolidationError(
+            f"output {output} exists and is not a directory — "
+            "pass a directory path or use --mode module with a .py file"
+        )
     workers = workers or os.cpu_count() or 1
     if no_parallel:
         workers = 1
     # Discover files first to check output inside source handling and existence
     files = discover(source, exclude=exclude, include=include, skip_dirs=[output])
+    if eol == "preserve":
+        eol = _detect_eol(files)
     data_files = discover_data_files(
         source,
         exclude=exclude,
@@ -366,6 +511,17 @@ def consolidate(
         raise ConsolidationError(
             f"fail-on-warning: {len(warnings_acc)} warning(s) emitted"
         )
+    # --strict promotes "output may be wrong" warnings into hard failures:
+    # name resolution gaps cannot be verified statically, so shipping them is risky.
+    if strict:
+        risky = [
+            w for w in warnings_acc if any(m in w for m in _STRICT_WARNING_MARKERS)
+        ]
+        if risky:
+            raise ConsolidationError(
+                "strict: refusing to write output with unresolved warnings:\n  "
+                + "\n  ".join(risky)
+            )
     # Resolver
     resolver = Resolver(
         modules,
@@ -383,8 +539,13 @@ def consolidate(
         entry_keep_all=entry_keep_all,
         main_name=main_name,
         generate_guard=generate_guard,
+        strict=strict,
     )
-    plan: Plan = resolver.build()
+    try:
+        plan: Plan = resolver.build()
+    except ResolverError as exc:
+        raise ConsolidationError(str(exc)) from exc
+    warnings_acc.extend(plan.warnings)
     # Log renames/dedupes
     for mod, orig, final in plan.renamed:
         logger.info("Renamed {}:{} -> {}", mod, orig, final)
@@ -403,8 +564,10 @@ def consolidate(
         formatter=formatter,
     )
     if mode == "single":
-        mod_text = render_consolidated(plan, source_name, **render_kwargs)
-        init_text = render_init(plan, source_name)
+        mod_text = _apply_eol(
+            render_consolidated(plan, source_name, **render_kwargs), eol
+        )
+        init_text = _apply_eol(render_init(plan, source_name), eol)
         # Validate compilation
         for fname, text in (("_consolidated.py", mod_text), ("__init__.py", init_text)):
             try:
@@ -423,6 +586,7 @@ def consolidate(
         # Diff handling
         diff_text = ""
         if diff or check:
+            missing_outputs: list[str] = []
             # Compare against existing output if present
             for fname, new_text in (
                 ("_consolidated.py", mod_text),
@@ -446,6 +610,15 @@ def consolidate(
                         logger.warning("Existing output {} is not a file", existing)
                     else:
                         logger.info("No existing {} to diff", fname)
+                        missing_outputs.append(fname)
+            if check and missing_outputs:
+                # Like isort/black --check: nothing to compare means "would
+                # create files", which is a change and therefore a failure.
+                raise ConsolidationError(
+                    "check failed: missing "
+                    + ", ".join(missing_outputs)
+                    + f" in {output} (run without --check to generate)"
+                )
             if diff_text:
                 if diff:
                     # Emit diff to stdout/log
@@ -559,6 +732,11 @@ def consolidate(
                             "_consolidated_validate", str(mod_path)
                         )
                         if spec and spec.loader:
+                            logger.warning(
+                                "--validate-import executes {}: top-level code "
+                                "(file/network access, threads) will run",
+                                mod_path,
+                            )
                             mod = importlib.util.module_from_spec(spec)
                             spec.loader.exec_module(mod)  # type: ignore
                             logger.success(
@@ -657,11 +835,12 @@ def consolidate(
         # Package mode: output/package_name/__init__.py contains consolidated, plus subpackage handling
         pkg_name = source_name if source.is_dir() else Path(source).stem
         pkg_dir = output / pkg_name
-        mod_text = render_package(plan, source_name, **render_kwargs)
+        mod_text = _apply_eol(render_package(plan, source_name, **render_kwargs), eol)
         # In package mode, we emit package_name/__init__.py and package_name/_consolidated.py
+        pkg_init = _apply_eol(render_init(plan, source_name), eol)
         for fname, text in (
             ("_consolidated.py", mod_text),
-            ("__init__.py", render_init(plan, source_name)),
+            ("__init__.py", pkg_init),
         ):
             try:
                 compile(text, fname, "exec")
@@ -710,7 +889,7 @@ def consolidate(
         pkg_dir.mkdir(parents=True, exist_ok=True)
         targets = [
             (pkg_dir / "_consolidated.py", mod_text),
-            (pkg_dir / "__init__.py", render_init(plan, source_name)),
+            (pkg_dir / "__init__.py", pkg_init),
         ]
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets))
@@ -743,7 +922,7 @@ def consolidate(
 
     elif mode == "module":
         # Module mode: single file output (no __init__.py)
-        mod_text = render_module(plan, source_name, **render_kwargs)
+        mod_text = _apply_eol(render_module(plan, source_name, **render_kwargs), eol)
         try:
             compile(mod_text, "_consolidated.py", "exec")
         except SyntaxError as exc:
@@ -830,7 +1009,7 @@ def consolidate(
         )
 
     elif mode == "flat":
-        mod_text = render_flat(plan, source_name, **render_kwargs)
+        mod_text = _apply_eol(render_flat(plan, source_name, **render_kwargs), eol)
         try:
             compile(mod_text, "_consolidated.py", "exec")
         except SyntaxError as exc:
@@ -877,7 +1056,7 @@ def consolidate(
         out_file = output / "_consolidated.py"
         out_file.write_text(mod_text, encoding="utf-8")
         # Also write __init__.py for compatibility?
-        init_text = render_init(plan, source_name)
+        init_text = _apply_eol(render_init(plan, source_name), eol)
         (output / "__init__.py").write_text(init_text, encoding="utf-8")
         copied = []
         for df in data_files:
@@ -907,7 +1086,10 @@ def consolidate(
         )
 
     elif mode == "split":
-        split_files = render_split(plan, source_name)
+        split_files = {
+            name: _apply_eol(text, eol)
+            for name, text in render_split(plan, source_name).items()
+        }
         # Validate each
         for fname, text in split_files.items():
             try:
