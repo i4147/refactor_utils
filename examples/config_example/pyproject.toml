@@ -1,0 +1,9 @@
+[tool.pyrefactor]
+exclude = ["tests/*", "ignored.py"]
+rename_strategy = "suffix"
+dedupe = "safe"
+imports = "prune"
+all = "respect"
+format = false
+fail_on_warning = false
+max_skipped = 5

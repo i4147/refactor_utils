@@ -13,8 +13,12 @@ dependencies = [
     "tree-sitter",
     "tree_sitter_python",
 ]
-# optional dependencies for --format and --progress
-# pip install refactor_utils[format] or [progress] if defined as extras (not yet)
+[project.optional-dependencies]
+format = ["black", "ruff"]
+progress = ["tqdm"]
+test = ["pytest", "pytest-cov", "tqdm"]
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+
 [project.scripts]
 pyrefactor = "refactor_utils.cli:main"
 
@@ -37,8 +41,31 @@ format = false
 fail_on_warning = false
 max_skipped = 10
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -q --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: integration tests requiring full consolidation",
+]
+
+[tool.coverage.run]
+source = ["src/refactor_utils"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
 [tool.black]
 line-length = 88
 
 [tool.ruff]
 line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.mkdocstrings]
+handlers.python.options.docstring_style = "google"
