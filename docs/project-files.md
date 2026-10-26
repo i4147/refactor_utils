@@ -64,7 +64,7 @@ Cross-module `Resolver(modules, keep_unused_imports, respect_all, entry, workers
 
 - `_prefix`/`_suffix`/`_module_path_prefix`/`_sanitize`.
 - `_spec_target`, `_resolve_symbol`, `_resolve_dotted` — internal vs external, star expansion.
-- `build()` → `_build_envs`, `_analyse` (eager/proj/ext_keys), `_dedupe` (safe/aggressive/none), emitting `emit_keys` via `imports_mode`, `_assign_names` (collision → rename_strategy/error, `main_name` override), `_resolve_ext_conflicts` (import alias), `_render_all`, `_assemble` (topo_order, tail mains, generate_guard, guards), `_exports` (`all_mode`).
+- `build()` → `_build_envs`, `_analyse` (eager/proj/ext_keys), `_dedupe` (safe/aggressive/none), `_emit_keys` via `imports_mode`, `_assign_names` (collision → rename_strategy/error, `main_name` override), `_resolve_ext_conflicts` (import alias), `_dedupe_post_rename` (`_block_signature`, fixed point), `_render_all`, `_assemble` (topo_order, tail mains, generate_guard, guards), `_exports` (`all_mode`).
 - `Plan(future_names, imports_text, guards, blocks, exports, renamed, deduped, warnings)`, `RenderedBlock(section, kind, text, origin, module)`.
 
 ## `src/refactor_utils/ordering.py`

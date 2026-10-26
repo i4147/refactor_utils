@@ -198,3 +198,53 @@ def test_parser_permission_error():
     info = parse_module_file("/nonexistent/path.py", "bad", False)
     assert info.errors
     assert any("cannot read" in e for e in info.errors)
+
+
+def test_parser_nonlocal_keeps_binding_shadowed(tmp_path):
+    """Check that a ``nonlocal`` target stays shadowed in the enclosing scope."""
+    p = tmp_path / "mod.py"
+    p.write_text(
+        textwrap.dedent(
+            """\
+            total = 0
+            def make_counter():
+                total = 0
+                def bump():
+                    nonlocal total
+                    total += 1
+                    return total
+                return bump
+            """
+        )
+    )
+    info = parse_module_file(str(p), "mod", False)
+    assert not info.errors
+    func = next(b for b in info.blocks if b.kind == "func")
+    names = {occ.name for occ in func.occs if occ.kind == "name"}
+    # The closure variable (and its ``nonlocal`` declaration) must not be
+    # collected as references to the module-level ``total``.
+    assert "total" not in names
+
+
+def test_parser_global_overrides_enclosing_shadow(tmp_path):
+    """Check that ``global`` re-exposes a name shadowed by an enclosing scope."""
+    p = tmp_path / "mod.py"
+    p.write_text(
+        textwrap.dedent(
+            """\
+            total = 0
+            def reset(items):
+                for total in items:
+                    def inner():
+                        global total
+                        total = 0
+                    inner()
+            """
+        )
+    )
+    info = parse_module_file(str(p), "mod", False)
+    func = next(b for b in info.blocks if b.kind == "func")
+    collected = [o for o in func.occs if o.kind == "name" and o.name == "total"]
+    # Exactly the ``global total`` declaration and the assignment it governs
+    # are collected; the loop variable stays shadowed.
+    assert len(collected) == 2

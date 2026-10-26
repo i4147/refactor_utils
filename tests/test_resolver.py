@@ -301,3 +301,296 @@ def test_namespace_source_map_flags(tmp_path):
     plan = r.build()
     # Check that blocks have origin info
     assert any(b.origin for b in plan.blocks)
+
+
+def _block_texts(plan) -> str:
+    """Join every rendered block of ``plan`` into one string.
+
+    Args:
+        plan: Plan returned by ``Resolver.build``.
+
+    Returns:
+        All block texts separated by blank lines.
+
+    """
+    return "\n\n".join(b.text for b in plan.blocks)
+
+
+def test_nonlocal_declaration_keeps_enclosing_binding_stable(tmp_path):
+    """Check that a ``nonlocal`` target is never renamed apart from its binding."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "x = 1\n",
+            "pkg/b.py": textwrap.dedent(
+                """\
+                x = 2
+                def make_counter(lock):
+                    x = 0
+                    with lock as x:
+                        def inc():
+                            nonlocal x
+                            x += 1
+                            return x
+                        return inc
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    text = _block_texts(plan)
+    # The module-level ``x`` of pkg.b is renamed; the closure variable and the
+    # ``nonlocal`` declaration must stay one single binding.
+    assert "b_x = 2" in text
+    assert "nonlocal x" in text
+    assert "    x = 0" in text
+    assert "b_x = 0" not in text
+    assert "nonlocal b_x" not in text
+
+
+def test_nonlocal_counter_is_not_renamed(tmp_path):
+    """Check that a plain ``nonlocal`` counter keeps its local name."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "total = 1\n",
+            "pkg/b.py": textwrap.dedent(
+                """\
+                total = 2
+                def make_counter(step=1):
+                    total = 0
+                    def bump():
+                        nonlocal total
+                        total += step
+                        return total
+                    return bump
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    text = _block_texts(plan)
+    assert "b_total = 2" in text
+    assert "nonlocal total" in text
+    assert "nonlocal b_total" not in text
+    assert "b_total = 0" not in text
+
+
+def test_global_declaration_follows_rename(tmp_path):
+    """Check that ``global`` names are renamed with the module-level object."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "x = 1\n",
+            "pkg/b.py": textwrap.dedent(
+                """\
+                x = 2
+                def bump(items):
+                    for x in items:
+                        def inner():
+                            global x
+                            x += 1
+                        inner()
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    text = _block_texts(plan)
+    # ``x`` inside ``inner`` refers to the module-level object, which is now
+    # called ``b_x``; the loop variable of ``bump`` stays local.
+    assert "global b_x" in text
+    assert "b_x += 1" in text
+    assert "for x in items" in text
+
+
+def test_dedupe_post_rename_merges_project_references(tmp_path):
+    """Check that blocks differing only by aliasing are deduped after renaming."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/models.py": "class User:\n    pass\n",
+            "pkg/a.py": textwrap.dedent(
+                """\
+                from .models import User as U
+                class Box:
+                    def get(self):
+                        return U()
+                """
+            ),
+            "pkg/b.py": textwrap.dedent(
+                """\
+                from .models import User
+                class Box:
+                    def get(self):
+                        return User()
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    texts = _block_texts(plan)
+    assert "b_Box" not in texts
+    assert texts.count("class Box:") == 1
+    assert ("pkg.b", "Box") in plan.deduped
+    # The dropped duplicate's rename must not be reported any more.
+    assert all(final != "b_Box" for _mod, _orig, final in plan.renamed)
+
+
+def test_dedupe_post_rename_merges_external_aliases(tmp_path):
+    """Check that aliased external imports do not hide duplicates."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": textwrap.dedent(
+                """\
+                from json import dumps
+                def render():
+                    return dumps({})
+                """
+            ),
+            "pkg/b.py": textwrap.dedent(
+                """\
+                from json import dumps as d
+                def render():
+                    return d({})
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    assert plan.deduped == [("pkg.b", "render")]
+    assert [b.module for b in plan.blocks if b.kind == "func"] == ["pkg.a"]
+    # The alias was only needed by the dropped duplicate.
+    assert plan.imports_text == "from json import dumps"
+
+
+def test_dedupe_post_rename_keeps_different_bodies(tmp_path):
+    """Check that different bodies are never merged by the post-rename pass."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": textwrap.dedent(
+                """\
+                from json import dumps
+                def render():
+                    return dumps({"a": 1})
+                """
+            ),
+            "pkg/b.py": textwrap.dedent(
+                """\
+                from json import dumps as d
+                def render():
+                    return d({"b": 2})
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    assert plan.deduped == []
+    assert [b.module for b in plan.blocks if b.kind == "func"] == ["pkg.a", "pkg.b"]
+    assert "b_render" in _block_texts(plan)
+
+
+def test_dedupe_post_rename_disabled_by_none(tmp_path):
+    """Check that ``dedupe='none'`` also disables the post-rename pass."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": textwrap.dedent(
+                """\
+                from json import dumps
+                def render():
+                    return dumps({})
+                """
+            ),
+            "pkg/b.py": textwrap.dedent(
+                """\
+                from json import dumps as d
+                def render():
+                    return d({})
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods, dedupe="none").build()
+    assert plan.deduped == []
+    assert [b.module for b in plan.blocks if b.kind == "func"] == ["pkg.a", "pkg.b"]
+
+
+def test_dedupe_post_rename_misc_only_aggressive(tmp_path):
+    """Check that side-effect blocks are only deduped in ``aggressive`` mode."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "from json import dumps\nprint(dumps({}))\n",
+            "pkg/b.py": "from json import dumps as d\nprint(d({}))\n",
+        },
+    )
+    safe = Resolver(mods, dedupe="safe").build()
+    assert safe.deduped == []
+    aggressive = Resolver(mods, dedupe="aggressive").build()
+    assert [(m, n) for m, n in aggressive.deduped] == [("pkg.b", "misc")]
+
+
+def test_dedupe_post_rename_reaches_fixed_point(tmp_path):
+    """Check that merging a helper also merges its callers in a later pass."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/m1.py": textwrap.dedent(
+                """\
+                from json import dumps
+                def helper():
+                    return dumps({})
+                class Box:
+                    def get(self):
+                        return helper()
+                """
+            ),
+            "pkg/m2.py": textwrap.dedent(
+                """\
+                from json import dumps as d
+                def helper():
+                    return d({})
+                class Box:
+                    def get(self):
+                        return helper()
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    # ``helper`` only becomes identical after the import alias is resolved,
+    # `Box` only after ``helper`` has been merged: that needs two passes.
+    assert ("pkg.m2", "helper") in plan.deduped
+    assert ("pkg.m2", "Box") in plan.deduped
+    assert [b.module for b in plan.blocks] == ["pkg.m1", "pkg.m1"]
+    assert "m2_Box" not in _block_texts(plan)
+
+
+def test_nonlocal_in_class_body_keeps_binding(tmp_path):
+    """Check that a ``nonlocal`` inside a class body pins the enclosing binding."""
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "x = 1\n",
+            "pkg/b.py": textwrap.dedent(
+                """\
+                x = 2
+                def outer(lock):
+                    x = 0
+                    with lock as x:
+                        class C:
+                            nonlocal x
+                            x = 2
+                    return C
+                """
+            ),
+        },
+    )
+    plan = Resolver(mods).build()
+    text = _block_texts(plan)
+    assert "nonlocal x" in text
+    assert "    x = 0" in text
+    assert "b_x = 0" not in text

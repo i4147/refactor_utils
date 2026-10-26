@@ -189,9 +189,10 @@ All new flags preserve `ConsolidationResult` contract (added fields, not changed
 | **Collisions external vs local** | `resolver.py` `_assign_names` (ext_loc_modules) | Renamed via strategy, logged | Info | `--rename-strategy` |
 | **Circular imports / import-time cycles** | `ordering.py` `topo_order` (heap + cycle detection) | Warn “Circular import-time dependency: emitting X before Y”, break cycle by emitting shallowest | Warning | Always |
 | **Duplicate definitions identical bodies** | `resolver.py` `_dedupe` (`safe`/`aggressive`) | Dropped, logged (`Dropping duplicate...`) | Info | `--dedupe` |
+| **Duplicates that only match after renaming** (aliased imports, `from .m import x as y`) | `resolver.py` `_dedupe_post_rename` (fixed point, `_block_signature` resolves references to canonical blocks / import identities) | Dropped after names are assigned; imports only they used are pruned | Info | `--dedupe` |
 | **Duplicate with differing bodies** | `resolver.py` `_assign_names` | Renamed via strategy | Info | `--rename-strategy` |
 | **Duplicate side-effect blocks** (`MISC` with same source) | `resolver.py` `aggressive` dedupe | Only deduped in aggressive (whitespace-insensitive) | Info | `--dedupe aggressive` |
-| **Class-body scoping, comprehensions, lambdas, walrus, `match`, `global`/`nonlocal`** | `parser.py` `_collect_occs` (shadow set, lazy flag, cls block) | Params shadowing respected, class body eager/lazy handled, walrus/match treated as normal | — | Always |
+| **Class-body scoping, comprehensions, lambdas, walrus, `match`, `global`/`nonlocal`** | `parser.py` `_collect_occs` (shadow set, lazy flag, cls block) + `_scope_declarations`/`_function_shadow` | Params shadowing respected, class body eager/lazy handled, walrus/match treated as normal; `nonlocal` names stay shadowed in the enclosing scope (one stable binding) and `global` names follow the rename | — | Always |
 | **Decorators, type annotations, default args referencing renamed names** | `parser.py` `_collect_occs` (params, return_type, type_params, defaults pushed as lazy) | Rewritten via occ edits; decorators/annotations tracked | Info on rename | Always |
 | **Module-scope rebindings / shadowing by params/locals** | `parser.py` (shadow frozenset) | Param names shadow module names; not rewritten | — | Always |
 | **`__file__`, `__name__`, `__package__`, `__path__`, relative resource loading** | `parser.py` `_detect_runtime_semantics` + `Occ` for `__file__` | Warn semantics change, resource loading may break | Warning | Always |
@@ -226,7 +227,7 @@ All dynamic/runtime cases prefer **warnings + skip**; only fail hard when `--str
 
 **P1 — Collision & hygiene**
 - `--rename-strategy {prefix,suffix,module_path,error}` in `resolver.py` (generate `taken` set, `_prefix`/`_suffix`/`_module_path_prefix`).
-- `--dedupe {none,safe,aggressive}` (group by `(kind, primary, norm_source, ext_refs)`).
+- `--dedupe {none,safe,aggressive}` (pre-rename pass groups by `(kind, primary, norm_source, ext_refs)`; a post-rename pass groups by resolved reference identities).
 - `--imports {prune,keep,strict}` and `--all {ignore,respect,merge,recompute}`.
 - `--entry` improvements: `--entry-keep-all`, `--main-name`, `--generate-guard` (tail handling, `main_name` override in `_assign_names`).
 - `--strip-comments`/`--strip-docstrings`/`--keep-comments` in `parser.py` (AST/docstring stripping, comment line filter).

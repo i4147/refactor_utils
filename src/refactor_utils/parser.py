@@ -42,6 +42,9 @@ _COMPOUND = {
 }
 _IMPORT_TYPES = {"import_statement", "import_from_statement", "future_import_statement"}
 _DEF_TYPES = {"function_definition", "class_definition", "decorated_definition"}
+#: Nodes that open a new Python scope, so ``global``/``nonlocal`` statements
+#: inside them belong to that scope, not to the scope being inspected.
+_SCOPE_TYPES = {"function_definition", "class_definition", "lambda"}
 _COMPREHENSIONS = {
     "list_comprehension",
     "set_comprehension",
@@ -297,6 +300,105 @@ def _param_names(params: Node | None) -> set[str]:
         for ch in params.named_children:
             names |= _binding_names(ch)
     return names
+
+
+def _scope_declarations(node: Node | None) -> tuple[set[str], set[str]]:
+    """Collect the ``global`` and ``nonlocal`` declarations of a single scope.
+
+    Nested ``def``/``class``/``lambda`` bodies are boundaries: their
+    declarations belong to their own scope and are skipped here.
+
+    Args:
+        node: Body node of the scope to inspect (usually a ``block``).
+
+    Returns:
+        ``(globals, nonlocals)``: the names declared by ``global`` and
+        ``nonlocal`` statements that belong to this scope.
+
+    """
+    globals_: set[str] = set()
+    nonlocals_: set[str] = set()
+    if node is None:
+        return globals_, nonlocals_
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        for ch in cur.named_children:
+            if ch.type == "global_statement":
+                globals_.update(
+                    _t(c) for c in ch.named_children if c.type == "identifier"
+                )
+            elif ch.type == "nonlocal_statement":
+                nonlocals_.update(
+                    _t(c) for c in ch.named_children if c.type == "identifier"
+                )
+            elif ch.type in _SCOPE_TYPES:
+                continue
+            else:
+                stack.append(ch)
+    return globals_, nonlocals_
+
+
+def _nested_nonlocals(node: Node | None) -> set[str]:
+    """Collect ``nonlocal`` names declared by scopes nested inside ``node``.
+
+    A nested ``nonlocal x`` can target this scope (or any scope above it), so
+    every name it declares must be treated as a live binding of this scope.
+    Nested classes are included: a class body opens a namespace, but a
+    ``nonlocal`` written inside it still targets the enclosing function.
+
+    Args:
+        node: Body node of the enclosing scope (usually a ``block``).
+
+    Returns:
+        Names declared via ``nonlocal`` anywhere below ``node``.
+
+    """
+    names: set[str] = set()
+    if node is None:
+        return names
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        for ch in cur.named_children:
+            if ch.type in ("function_definition", "lambda", "class_definition"):
+                names |= _scope_declarations(ch.child_by_field_name("body"))[1]
+            # Descend into the nested scope anyway: a deeper ``nonlocal`` may
+            # target this scope as well.
+            stack.append(ch)
+    return names
+
+
+def _function_shadow(
+    shadow: frozenset[str], params: Node | None, body: Node | None
+) -> frozenset[str]:
+    """Compute the shadow set used while walking a function body.
+
+    ``nonlocal`` declarations make a name a binding of an *enclosing* function,
+    so the enclosing scope must keep that name untouched; otherwise renaming
+    the binding while the nested ``nonlocal x`` stays put silently rebinds it
+    (or turns the declaration into a ``SyntaxError``). ``nonlocal`` names are
+    therefore added to this scope's shadow set, which propagates into nested
+    scopes as well.
+
+    ``global`` declarations do the opposite: the name is a module-level
+    binding again, so it is removed from the inherited shadow set and renamed
+    together with the module-level object.
+
+    Args:
+        shadow: Shadow set inherited from the enclosing scope.
+        params: Parameter node of the function (``None`` for none).
+        body: Body node of the function (``None`` when unavailable).
+
+    Returns:
+        The shadow set to use for the function body and its nested scopes.
+
+    """
+    own_globals, own_nonlocals = _scope_declarations(body)
+    return frozenset(
+        (shadow | _param_names(params) | own_nonlocals | _nested_nonlocals(body))
+        - own_globals
+    )
 
 
 def _push_param_exprs(
@@ -570,6 +672,9 @@ def _collect_occs(
     bindings are tracked so that locally bound names (parameters, ``for``
     targets, ``with``/``except`` aliases, ``match`` captures and comprehension
     variables) are never confused with module-level objects of the same name.
+    ``global`` declarations make a name follow the module-level object again,
+    while ``nonlocal`` declarations pin the enclosing function binding *and*
+    the declaration to one stable name (see :func:`_function_shadow`).
 
     Args:
         root: Root node of the block (the top-level statement).
@@ -657,13 +762,13 @@ def _collect_occs(
             if name_node is not None and node.id == own_id:
                 stack.append((name_node, lazy, shadow, False))
             params = node.child_by_field_name("parameters")
-            inner = shadow | _param_names(params)
+            body = node.child_by_field_name("body")
+            inner = _function_shadow(shadow, params, body)
             _push_param_exprs(stack, params, lazy, shadow)
             for fld in ("return_type", "type_parameters"):
                 sub = node.child_by_field_name(fld)
                 if sub is not None:
                     stack.append((sub, lazy, shadow, False))
-            body = node.child_by_field_name("body")
             if body is not None:
                 stack.append((body, True, inner, False))
             continue
@@ -1021,8 +1126,9 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     full_text = src.decode("utf-8", "replace")
     _detect_dynamic_patterns(full_text, info)
     _detect_runtime_semantics(full_text, info)
-    # Additional edge: walrus, match, global/nonlocal are handled via scoping in _collect_occs (lazy, shadow)
-    # Comprehensions, lambdas already handled via lazy propagation
+    # Additional edge: walrus, match and nonlocal/global declarations are
+    # handled via the scope tracking in _collect_occs (lazy, shadow).
+    # Comprehensions and lambdas are already handled via lazy propagation.
 
 
 def parse_module_file(

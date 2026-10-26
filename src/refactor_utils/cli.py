@@ -179,7 +179,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--dedupe",
         choices=["none", "safe", "aggressive"],
         default="safe",
-        help="duplicate-block removal: none (keep all), safe (default, identical class/func), aggressive (also const/misc, whitespace-insensitive) [resolver.py]",
+        help="duplicate-block removal: none (keep all), safe (default, identical class/func), aggressive (also const/misc, whitespace-insensitive); a post-rename pass also catches blocks that differ only by import aliasing [resolver.py]",
     )
 
     # Comments / docstrings / source maps
