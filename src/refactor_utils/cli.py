@@ -1,3 +1,10 @@
+"""Command line interface for ``pyrefactor``.
+
+Thin argument-parsing layer over :func:`refactor_utils.core.consolidate`; all
+defaults and behaviour live in :mod:`refactor_utils.core` so the library API and
+the CLI can never drift apart.
+"""
+
 from __future__ import annotations
 import argparse
 import sys
@@ -9,6 +16,15 @@ from .logging_setup import setup_logging
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the ``pyrefactor`` argument parser.
+
+    Every flag documents the module that implements it, which keeps the CLI
+    help and the library options in sync.
+
+    Returns:
+        A fully configured :class:`argparse.ArgumentParser`.
+
+    """
     p = argparse.ArgumentParser(
         prog="pyrefactor",
         description="Consolidate a python module/package/project into a single, dependency-ordered file.",
@@ -285,7 +301,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero if any file had to be skipped [core.py]",
+        help=(
+            "exit non-zero if any file had to be skipped, on import-cycle "
+            "warnings, or on warnings that mean the output may be wrong [core.py]"
+        ),
     )
     p.add_argument(
         "--fail-on-warning",
@@ -304,6 +323,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="try partial parse for files with syntax errors instead of skipping [parser.py, core.py]",
     )
+    p.add_argument(
+        "--eol",
+        choices=["lf", "crlf", "preserve"],
+        default="lf",
+        help="line endings for generated files: lf (default), crlf, or preserve (match the input files) [core.py]",
+    )
 
     # Logging
     p.add_argument(
@@ -317,12 +342,31 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _resolve_progress(args):
+def _resolve_progress(args) -> bool:
+    """Resolve the ``--progress``/``--progress-bar`` aliases.
+
+    Args:
+        args: Parsed command line namespace.
+
+    Returns:
+        ``True`` when either progress flag was supplied.
+
+    """
     # --progress and --progress-bar are aliases
     return bool(args.progress or getattr(args, "progress_bar", False))
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command line entry point.
+
+    Args:
+        argv: Argument list to parse; defaults to ``sys.argv[1:]``.
+
+    Returns:
+        Process exit code: ``0`` success, ``1`` unexpected failure or strictness
+        violation, ``2`` for a :class:`ConsolidationError`.
+
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(args.log_level, args.log_file)
@@ -378,6 +422,8 @@ def main(argv: list[str] | None = None) -> int:
             entry_keep_all=entry_keep_all,
             main_name=args.main_name,
             generate_guard=args.generate_guard,
+            strict=args.strict,
+            eol=args.eol,
         )
     except ConsolidationError as exc:
         logger.error("{}", exc)

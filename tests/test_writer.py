@@ -15,6 +15,7 @@ from refactor_utils.writer import (
 
 
 def make_plan(tmp_path, files, **resolver_kwargs):
+    """Build a small plan for writer tests."""
     mods = {}
     for fname, src in files.items():
         p = tmp_path / fname
@@ -30,6 +31,7 @@ def make_plan(tmp_path, files, **resolver_kwargs):
 
 
 def test_render_consolidated_basic(tmp_path):
+    """Check that the consolidated module has sections and bodies."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_consolidated(plan, "pkg")
     assert "Consolidated from ``pkg``" in text
@@ -40,6 +42,7 @@ def test_render_consolidated_basic(tmp_path):
 
 
 def test_render_consolidated_source_map(tmp_path):
+    """Check that source-map comments are emitted."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_consolidated(
         plan, "pkg", source_map=True, preserve_modules=True, namespace=True
@@ -50,6 +53,7 @@ def test_render_consolidated_source_map(tmp_path):
 
 
 def test_render_init(tmp_path):
+    """Check the generated ``__init__.py`` exports and ``__all__``."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\ndef foo(): pass\n"})
     init = render_init(plan, "pkg")
     assert "from ._consolidated import" in init
@@ -59,6 +63,7 @@ def test_render_init(tmp_path):
 
 
 def test_render_flat(tmp_path):
+    """Check that flat mode omits section headers."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\nY=2\n"})
     text = render_flat(plan, "pkg")
     # Flat should not have section headers
@@ -71,6 +76,7 @@ def test_render_flat(tmp_path):
 
 
 def test_render_split(tmp_path):
+    """Check that split mode writes one file per section."""
     plan = make_plan(
         tmp_path,
         {
@@ -88,6 +94,7 @@ def test_render_split(tmp_path):
 
 
 def test_render_package(tmp_path):
+    """Check that package mode renders the consolidated module."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_package(plan, "pkg")
     assert "pkg" in text
@@ -95,12 +102,14 @@ def test_render_package(tmp_path):
 
 
 def test_render_module(tmp_path):
+    """Check that module mode renders a single file."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_module(plan, "pkg")
     compile(text, "_consolidated.py", "exec")
 
 
 def test_render_format(tmp_path):
+    """Check that formatting can be requested without breaking output."""
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_consolidated(plan, "pkg", do_format=True, formatter="black")
     # Should still compile even if black missing

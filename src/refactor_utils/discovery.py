@@ -36,6 +36,9 @@ EXCLUDED_DIRS = {
     ".vscode",
 }
 EXCLUDED_FILE_GLOBS = (
+    # Excluded on purpose: `python -m pkg` cannot be reproduced in a single
+    # file, so the file is skipped and a warning is emitted (see
+    # ``_warn_about_main_modules``).
     "__main__.py",
     "conftest.py",
     "test_*.py",
@@ -96,6 +99,17 @@ DATA_FILENAMES = {
 
 
 def detect_base(root: Path) -> Path:
+    """Determine the directory that module names are relative to.
+
+    Handles both flat package layouts (``pkg/``) and ``src/`` layouts.
+
+    Args:
+        root: Source root passed by the user.
+
+    Returns:
+        The directory to compute dotted module names from.
+
+    """
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"
@@ -217,6 +231,31 @@ def _walk(
             continue
 
 
+def _warn_about_main_modules(root: Path) -> None:
+    """Warn that ``__main__.py`` files are not consolidated.
+
+    ``__main__.py`` is excluded from discovery, which means ``python -m pkg``
+    stops working after consolidation. Users deserve an explicit warning
+    instead of a silent behavioural change.
+
+    Args:
+        root: Directory that was walked for python sources.
+
+    """
+    found: list[Path] = []
+    for path in root.rglob("__main__.py"):
+        if any(part in EXCLUDED_DIRS for part in path.parts):
+            continue
+        found.append(path)
+    if found:
+        logger.warning(
+            "{} `__main__.py` file(s) are excluded ({}); `python -m <package>` "
+            "will not be supported by the consolidated output",
+            len(found),
+            ", ".join(str(p) for p in found[:3]),
+        )
+
+
 def discover(
     root: Path,
     exclude: tuple[str, ...] = (),
@@ -224,6 +263,23 @@ def discover(
     include: tuple[str, ...] = (),
     follow_symlinks: bool = False,
 ) -> list[SourceFile]:
+    """Find the python files of a project and derive their module names.
+
+    Symlinks are de-duplicated by resolved path so that a link and its target
+    cannot be parsed as two different modules. Excluded ``__main__.py`` files
+    produce an explicit warning because ``python -m pkg`` stops working.
+
+    Args:
+        root: File or directory to scan.
+        exclude: Extra glob patterns to skip (highest precedence).
+        skip_dirs: Directories to skip entirely (e.g. the output directory).
+        include: Globs that re-include otherwise excluded paths.
+        follow_symlinks: Recurse into symlinked directories.
+
+    Returns:
+        Discovered source files with their dotted module names.
+
+    """
     root = root.resolve()
     if root.is_file():
         module = root.stem
@@ -233,7 +289,22 @@ def discover(
     skip = {p.resolve() for p in skip_dirs if p.exists()}
     # Also skip output inside source tree already handled via skip_dirs
     files: list[SourceFile] = []
+    seen: dict[Path, SourceFile] = {}
     for path in _walk(walk_root, skip, exclude, include, follow_symlinks):
+        # A symlink and its target can both be yielded; ``parsed`` is keyed by
+        # module name, so one would silently overwrite the other.
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            logger.warning(
+                "Skipping {} — resolves to {} (already discovered as {})",
+                path,
+                resolved,
+                seen[resolved].path,
+            )
+            continue
         try:
             parts = list(path.relative_to(base).with_suffix("").parts)
         except ValueError:
@@ -244,7 +315,10 @@ def discover(
             parts = parts[:-1]
         if not parts:
             parts = [base.name]
-        files.append(SourceFile(path, ".".join(parts), is_pkg))
+        source_file = SourceFile(path, ".".join(parts), is_pkg)
+        seen[resolved] = source_file
+        files.append(source_file)
+    _warn_about_main_modules(walk_root)
     # Handle namespace packages: directories without __init__.py but with submodules
     # Already covered because _walk recurses regardless of __init__.py presence.
     # Log if we found namespace-like roots

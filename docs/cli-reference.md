@@ -20,7 +20,7 @@ usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
                   [--format] [--post-format] [--formatter {black,ruff}]
                   [--validate] [--validate-import] [--strict]
                   [--fail-on-warning] [--max-skipped N]
-                  [--allow-syntax-errors]
+                  [--allow-syntax-errors] [--eol {lf,crlf,preserve}]
                   [--log-level {TRACE,DEBUG,INFO,WARNING,ERROR}]
                   [--log-file LOG_FILE] [--version]
                   source
@@ -83,7 +83,11 @@ usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
 - `--check` — like dry-run but fail if diff non-empty.
 - `--stdout` — to stdout not files.
 - `--diff` — unified diff vs existing.
+- `--check` — fail when the output would change **or does not exist yet**
+  (like `black --check` / `isort --check`).
 - `--overwrite` / `--force` — allow overwrite non-empty.
+- `--eol {lf,crlf,preserve}` — line endings for generated files; `preserve`
+  matches the dominant ending of the input files — `core.py`.
 
 ## Config / Format / Validate
 
@@ -91,14 +95,20 @@ usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
 - `--pyproject` / `--setup-cfg` — auto-detect near source.
 - `--format` / `--post-format` — `black`/`ruff` — `writer.py`.
 - `--formatter {black,ruff}`.
-- `--validate` — compile; `--validate-import` also smoke-import — `core.py`.
+- `--validate` — compile; `--validate-import` also imports the generated module.
+  The import **executes top-level code** and logs a prominent warning first —
+  `core.py`.
 
 ## Strictness
 
-- `--strict` — exit 1 if any skipped.
+- `--strict` — exit 1 if any file was skipped, and refuse to write output when
+  a warning means the result may be wrong (unresolved name lookups, computed
+  `__all__`, unresolvable internal imports) or when an import cycle has to be
+  broken.
 - `--fail-on-warning` — exit 2 if warnings.
 - `--max-skipped N` — fail if `> N` skipped.
 - `--allow-syntax-errors` — partial parse — `parser.py`.
+- `--eol` — `lf` (default), `crlf`, or `preserve` — `core.py`.
 
 ## Logging
 

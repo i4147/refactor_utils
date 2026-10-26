@@ -8,8 +8,33 @@ from dataclasses import dataclass, field
 from typing import Iterable
 from loguru import logger
 from .imports import build_import_section, future_section, render_import_line
-from .models import CLASS, CONST, FUNC, MAIN, MISC, Block, ImportSpec, ModuleInfo
+from .models import (
+    CLASS,
+    CONST,
+    FUNC,
+    MAIN,
+    MISC,
+    Block,
+    GuardBlock,
+    ImportSpec,
+    ModuleInfo,
+    ResolverError,
+)
 from .ordering import topo_order
+
+#: Dunder module attributes that are commonly re-exported and must survive the
+#: "private names are not exported" filter.
+DUNDER_EXPORTS = frozenset(
+    {"__version__", "__author__", "__email__", "__license__", "__copyright__"}
+)
+#: Suffixes that make a guard body meaningless (headers without statements).
+_GUARD_HEADER_RE = re.compile(
+    r"^\s*(?:try|except|else|finally|if|elif|with|async|pass)\b"
+)
+_ASYNC_DEF_RE = re.compile(rb"^\s*(?:@[^\n]*\n\s*)*async\s+def\b")
+_STRING_RE = re.compile(r"""(?P<q>['"])(?P<body>[^'"\n]{1,120})(?P=q)""")
+_ANNOTATION_LIKE_RE = re.compile(r"^[\w\s\[\],.|]+$")
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
 # Target = ("def", Block, original_name) | ("ext", key) | ("mod", module_name)
 Target = tuple
@@ -19,6 +44,17 @@ _SECTION = {CONST: "const", MISC: "const", CLASS: "class", FUNC: "func"}
 
 @dataclass
 class RenderedBlock:
+    """A block after rewriting, ready to be emitted.
+
+    Attributes:
+        section: Target section: ``const``, ``class``, ``func`` or ``entry``.
+        kind: Original block kind.
+        text: Rewritten block source.
+        origin: ``file:line-range`` for source maps.
+        module: Module the block came from.
+
+    """
+
     section: str
     kind: str
     text: str
@@ -29,6 +65,21 @@ class RenderedBlock:
 
 @dataclass
 class Plan:
+    """Everything needed to render the consolidated output.
+
+    Attributes:
+        future_names: ``__future__`` features to emit (uniform across modules).
+        imports_text: Rendered external import section.
+        guards: Verbatim import guards, in output order.
+        blocks: Rendered blocks in dependency order.
+        exports: Public API split into constants, classes and functions.
+        renamed: ``(module, original, final)`` rename log.
+        deduped: ``(module, name)`` log of dropped duplicates.
+        reexports: Exported name to the name inside the consolidated module.
+        warnings: Warnings collected while building the plan.
+
+    """
+
     future_names: list[str]
     imports_text: str
     guards: list[str]
@@ -41,6 +92,8 @@ class Plan:
         default_factory=list
     )  # (module, original, final)
     deduped: list[tuple[str, str]] = field(default_factory=list)  # (module, name)
+    # exported name -> name inside the consolidated module (aliased re-exports)
+    reexports: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -63,6 +116,12 @@ def _sanitize(text: str) -> str:
 
 
 class Resolver:
+    """Turn parsed modules into a single, dependency-ordered plan.
+
+    The resolver owns all cross-module reasoning: environment construction,
+    reference analysis, dedupe, renaming, import pruning and rendering.
+    """
+
     def __init__(
         self,
         modules: dict[str, ModuleInfo],
@@ -81,7 +140,32 @@ class Resolver:
         entry_keep_all: bool = False,
         main_name: str | None = None,
         generate_guard: bool = False,
+        strict: bool = False,
     ) -> None:
+        """Initialize the resolver.
+
+        Args:
+            modules: Parsed modules keyed by dotted module name.
+            keep_unused_imports: Deprecated alias for ``imports_mode="keep"``.
+            respect_all: Deprecated alias for ``all_mode="respect"``.
+            entry: Modules whose ``__main__`` guard should be kept.
+            workers: Worker count used when rendering blocks.
+            rename_strategy: Collision policy: ``prefix``, ``suffix``,
+                ``module_path`` or ``error``.
+            dedupe: Duplicate removal mode: ``none``, ``safe`` or
+                ``aggressive``.
+            imports_mode: Import handling: ``prune``, ``keep`` or ``strict``.
+            all_mode: ``__all__`` handling: ``ignore``, ``respect``, ``merge``
+                or ``recompute``.
+            namespace: Emit module namespace comments (used by the writer).
+            preserve_modules: Emit per-block origin comments.
+            source_map: Emit ``file:line`` comments per block.
+            entry_keep_all: Keep every ``__main__`` guard.
+            main_name: Name to give the ``main`` entry point.
+            generate_guard: Synthesize a ``__main__`` guard when missing.
+            strict: Promote risky warnings and import cycles to errors.
+
+        """
         self.modules = dict(sorted(modules.items()))
         self.keep_unused = keep_unused_imports
         self.respect_all = respect_all
@@ -98,6 +182,7 @@ class Resolver:
         self.entry_keep_all = entry_keep_all
         self.main_name = main_name
         self.generate_guard = generate_guard
+        self.strict = strict
         # Compatibility: keep_unused_imports -> imports_mode
         if self.keep_unused and self.imports_mode == "prune":
             self.imports_mode = "keep"
@@ -127,15 +212,26 @@ class Resolver:
             for n in b.names:
                 self.def_block[(b.module, n)] = b
         self.future_names: set[str] = set()
+        self.module_futures: dict[str, set[str]] = {}
         self.import_table: dict[str, dict[str, ImportSpec]] = {}
         self.star_specs: dict[str, list[ImportSpec]] = {}
+        self._reexport_specs: list[tuple[str, str, Target]] = []
+        self._verbatim_keys: set[tuple] = set()
+        # Names bound by imports *inside* blocks (function bodies) must not be
+        # hoisted to the module import section: keeping them local preserves
+        # optional-dependency degradation (try/except around the import).
+        self.nested_locals: dict[int, set[str]] = {}
+        self._nested_ext_keys: set[tuple] = set()
+        self._dropped_edits = 0
         for m, mi in self.modules.items():
             table: dict[str, ImportSpec] = {}
             stars: list[ImportSpec] = []
+            futures = set(mi.future_names)
             for spec in mi.imports:
                 if spec.module == "__future__":
                     if spec.name:
                         self.future_names.add(spec.name)
+                        futures.add(spec.name)
                     continue
                 if spec.star:
                     stars.append(spec)
@@ -143,6 +239,7 @@ class Resolver:
                     table.setdefault(spec.local_name, spec)
             self.import_table[m] = table
             self.star_specs[m] = stars
+            self.module_futures[m] = futures
         self.env: dict[str, dict[str, Target]] = {}
         self.eager: dict[int, set[Block]] = {}
         self.proj_refs: dict[int, set[Block]] = {}
@@ -153,6 +250,7 @@ class Resolver:
         self.ext_final: dict[tuple, str] = {}
         self.star_keys: set[tuple] = set()
         self._warned: set[str] = set()
+        self._warned_list: list[str] = []
         # For reporting
         self._renamed_log: list[tuple[str, str, str]] = []
         self._deduped_log: list[tuple[str, str]] = []
@@ -161,8 +259,15 @@ class Resolver:
         return any(module == e or module.endswith("." + e) for e in self.entry)
 
     def _warn_once(self, msg: str) -> None:
+        """Log ``msg`` once, and record it on the plan.
+
+        Args:
+            msg: Warning text. Duplicates are ignored.
+
+        """
         if msg not in self._warned:
             self._warned.add(msg)
+            self._warned_list.append(msg)
             logger.warning(msg)
 
     def _is_internal(self, spec: ImportSpec) -> bool:
@@ -257,6 +362,21 @@ class Resolver:
         return res if res is not None and res[0] in ("def", "ext") else None
 
     def build(self) -> Plan:
+        """Build the consolidation plan.
+
+        Runs environment construction, reference analysis, dedupe, renaming,
+        import resolution and rendering, in that order. All mutation happens
+        here, before any rendering is parallelised.
+
+        Returns:
+            The complete :class:`Plan` ready to be rendered.
+
+        Raises:
+            ResolverError: If the plan cannot be produced safely (for example a
+                module object is used as a value, or name collisions are
+                requested to be fatal via ``rename_strategy="error"``).
+
+        """
         self._build_envs()
         self._analyse()
         self._dedupe()
@@ -266,7 +386,11 @@ class Resolver:
         # imports_mode handling
         if self.imports_mode == "keep":
             for env in self.env.values():
-                emit_keys |= {t[1] for t in env.values() if t[0] == "ext"}
+                emit_keys |= {
+                    target[1]
+                    for target in env.values()
+                    if target[0] == "ext" and target[1] not in self._nested_ext_keys
+                }
         elif self.imports_mode == "strict":
             # In strict, we prune but also warn if unused imports exist
             all_ext = {
@@ -280,10 +404,127 @@ class Resolver:
                     )
         # keep_unused legacy already mapped
         emit_keys |= self.star_keys
+        emit_keys |= self._collect_reexports()
+        emit_keys |= self._guard_used_keys()
+        emit_keys |= self._verbatim_keys
         self._assign_names(kept, emit_keys)
         self._resolve_ext_conflicts(emit_keys)
+        self._check_module_value_usage(kept)
+        self._warn_stale_forward_refs(kept)
+        if self.star_keys:
+            self._warn_once(
+                "external star import(s) "
+                + ", ".join(sorted(k[1] for k in self.star_keys))
+                + " are emitted verbatim and may shadow consolidated names"
+            )
         rendered = self._render_all(kept)
-        return self._assemble(kept, rendered, emit_keys)
+        plan = self._assemble(kept, rendered, emit_keys)
+        plan.future_names = self._uniform_futures(kept)
+        plan.warnings = list(self._warned_list)
+        return plan
+
+    def _uniform_futures(self, kept: list[Block]) -> list[str]:
+        """Return the ``__future__`` features every kept module agrees on.
+
+        Unioning ``__future__`` imports across modules silently changed the
+        semantics of modules that did not opt in (most notably
+        ``annotations``), so only the intersection is emitted and the
+        difference is reported.
+
+        Args:
+            kept: Blocks that will be part of the output.
+
+        Returns:
+            Sorted list of feature names that are safe to emit.
+
+        """
+        modules = sorted({b.module for b in kept})
+        if not modules:
+            return []
+        sets = {m: self.module_futures.get(m, set()) for m in modules}
+        common = set.intersection(*(s for s in sets.values()))
+        for name in sorted(set().union(*sets.values()) - common):
+            missing = [m for m in modules if name not in sets[m]]
+            self._warn_once(
+                f"from __future__ import {name}: not used by every module "
+                f"({', '.join(missing)}) — not emitted for the consolidated file"
+            )
+        return sorted(common)
+
+    def _collect_reexports(self) -> set[tuple]:
+        """Collect public re-exports performed by package ``__init__`` modules.
+
+        The canonical pattern ``from .sub import helper as public_helper`` in
+        ``__init__.py`` never creates a block, so the name used to disappear
+        from the generated ``__init__.py``. Those specs are recorded here and
+        turned into explicit exports in :meth:`_exports`.
+
+        Returns:
+            External import keys that must be emitted so the re-exports resolve.
+
+        """
+        self._reexport_specs = []
+        ext_keys: set[tuple] = set()
+        for module, mi in self.modules.items():
+            if not mi.is_pkg:
+                continue
+            declared = set(mi.declared_all or ())
+            for local, spec in self.import_table.get(module, {}).items():
+                if not local or local == "__all__" or spec.star:
+                    continue
+                if local.startswith("_") and local not in declared:
+                    continue
+                tgt = self._spec_target(spec, set())
+                if tgt is None:
+                    continue
+                self._reexport_specs.append((module, local, tgt))
+                if tgt[0] == "ext":
+                    ext_keys.add(tgt[1])
+        return ext_keys
+
+    def _guard_used_keys(self) -> set[tuple]:
+        """Return external import keys referenced by kept guards.
+
+        Guards are copied verbatim, so any name they mention must still be
+        imported in the consolidated module — otherwise pruning breaks them
+        (``TYPE_CHECKING`` and ``TypeAlias`` are the common cases).
+
+        Returns:
+            External import keys to force into the import section.
+
+        """
+        needed: set[tuple] = set()
+        for guard in (g for mi in self.modules.values() for g in mi.guards):
+            words = set(_IDENT_RE.findall(guard.text))
+            if not words:
+                continue
+            for table in self.import_table.values():
+                for local, spec in table.items():
+                    if not local or local not in words:
+                        continue
+                    tgt = self._spec_target(spec, set())
+                    if tgt is not None and tgt[0] == "ext":
+                        needed.add(tgt[1])
+        return needed
+
+    def _verbatim_ext_target(self, spec: ImportSpec) -> Target:
+        """Represent an unresolvable internal import as a verbatim import.
+
+        Internal imports whose target cannot be resolved (compiled extensions,
+        excluded or dynamically generated modules) used to be dropped, which
+        turned working code into ``NameError``s. Keeping them verbatim and
+        emitting a warning is strictly better.
+
+        Args:
+            spec: The import specification to keep.
+
+        Returns:
+            An ``("ext", key)`` target that renders back to the original import.
+
+        """
+        if spec.is_from:
+            return ("ext", ("from", spec.module, spec.name, spec.alias))
+        return ("ext", ("import", spec.module, spec.alias))
 
     def _build_envs(self) -> None:
         for m, mi in self.modules.items():
@@ -298,6 +539,27 @@ class Resolver:
                 for occ in b.occs:
                     if occ.kind == "nested_import":
                         specs.extend(s for s in occ.specs if s.module != "__future__")
+            for b in mi.blocks:
+                local: set[str] = set()
+                for occ in b.occs:
+                    if occ.kind != "nested_import":
+                        continue
+                    local |= {
+                        spec.local_name
+                        for spec in occ.specs
+                        if spec.local_name
+                        and spec.module != "__future__"
+                        and not self._is_internal(spec)
+                    }
+                    for spec in occ.specs:
+                        if spec.module == "__future__" or self._is_internal(spec):
+                            continue
+                        self._nested_ext_keys.add(
+                            ("from", spec.module, spec.name, spec.alias)
+                            if spec.is_from
+                            else ("import", spec.module, spec.alias)
+                        )
+                self.nested_locals[b.bid] = local
             for spec in specs:
                 if spec.star:
                     if self._is_internal(spec):
@@ -321,23 +583,40 @@ class Resolver:
                     if self._is_internal(spec):
                         self._warn_once(
                             f"{m}: cannot resolve internal import '{spec.module}"
-                            f"{'.' + spec.name if spec.name else ''}' (module skipped, missing or excluded?)"
+                            f"{'.' + spec.name if spec.name else ''}' (module skipped, "
+                            "missing, excluded or a compiled extension) — kept verbatim"
                         )
-                    continue
+                        tgt = self._verbatim_ext_target(spec)
+                        # Compiled extensions register themselves on import, so
+                        # the statement must survive even when unreferenced.
+                        self._verbatim_keys.add(tgt[1])
+                    else:
+                        continue
                 # Handle import aliases and potential collisions later
                 env.setdefault(spec.local_name, tgt)
             for g in mi.guards:
-                for spec in g.specs:
-                    if self._is_internal(spec):
-                        self._warn_once(
-                            f"{m}: guarded import of internal module '{spec.module}' is kept verbatim and will not resolve"
-                        )
-                    # Also handle conditional/platform/optional imports: TYPE_CHECKING already filtered in parser,
-                    # but try/except ImportError guards are kept verbatim — warn
-                    if "ImportError" in g.text or "try:" in g.text:
-                        self._warn_once(
-                            f"{m}: conditional/optional import guard kept verbatim (may have side effects)"
-                        )
+                internal = [s for s in g.specs if self._is_internal(s)]
+                if internal:
+                    # Relative imports cannot work in a consolidated file: hoist
+                    # them to module level and drop them from the guard text.
+                    g.internal = True
+                    for spec in internal:
+                        tgt = self._spec_target(spec, set())
+                        if tgt is None:
+                            tgt = self._verbatim_ext_target(spec)
+                            # Unresolvable (e.g. compiled) targets are kept in
+                            # the import section even when unused.
+                            self._verbatim_keys.add(tgt[1])
+                        if spec.local_name:
+                            env.setdefault(spec.local_name, tgt)
+                    self._warn_once(
+                        f"{m}: internal import(s) inside a guarded block were "
+                        "hoisted to module level"
+                    )
+                elif "ImportError" in g.text or "try:" in g.text:
+                    self._warn_once(
+                        f"{m}: optional import guard kept verbatim (may have side effects)"
+                    )
             self.env[m] = env
 
     def _analyse(self) -> None:
@@ -347,7 +626,12 @@ class Resolver:
             proj: set[Block] = set()
             ext_keys: set[tuple] = set()
             ext_refs: set[tuple] = set()
+            local_names = self.nested_locals.get(b.bid, set())
             for occ in b.occs:
+                if occ.name and occ.name in local_names:
+                    # Resolved by an import inside this block, not by the
+                    # module-level environment.
+                    continue
                 if occ.kind == "name":
                     tgt = env.get(occ.name)
                     label = occ.name
@@ -381,7 +665,14 @@ class Resolver:
         for b in self.blocks:
             # safe: only CLASS/FUNC with identical bodies and no external refs differences
             if self.dedupe_mode == "safe":
-                if b.kind in (CLASS, FUNC) and not self.proj_refs[b.bid]:
+                if b.kind == CONST:
+                    # Identical constant definitions are safe to collapse: the
+                    # parser already merged repeated assignments of one name
+                    # inside a module, so equal text means equal semantics.
+                    groups[
+                        (b.kind, b.primary, b.source.strip(), self.ext_refs[b.bid])
+                    ].append(b)
+                elif b.kind in (CLASS, FUNC) and not self.proj_refs[b.bid]:
                     groups[
                         (b.kind, b.primary, b.source.strip(), self.ext_refs[b.bid])
                     ].append(b)
@@ -422,7 +713,7 @@ class Resolver:
             for mi in self.modules.values()
             for g in mi.guards
             for s in g.specs
-            if s.local_name
+            if s.local_name and not self._is_internal(s)
         }
         group: dict[str, list[Block]] = defaultdict(list)
         for b in kept:
@@ -588,6 +879,16 @@ class Resolver:
         out, pos, last_end = [], 0, -1
         for s, e, r in edits:
             if s < last_end:
+                # Overlapping edit: keep the outermost rewrite (the inner one
+                # was already covered) but never drop silently.
+                self._dropped_edits += 1
+                logger.debug(
+                    "Dropping overlapping rewrite in {} at bytes {}-{} ({!r})",
+                    b.module,
+                    s,
+                    e,
+                    r,
+                )
                 continue
             out.append(b.source[pos:s])
             out.append(r.encode())
@@ -597,12 +898,137 @@ class Resolver:
         return text
 
     def _render_all(self, kept: list[Block]) -> dict[int, str]:
+        """Render every kept block, optionally in parallel.
+
+        Thread safety relies on a strict phase separation: :meth:`build` does
+        all mutation (environments, renaming, ``final``/``ext_final`` maps)
+        before this method runs, and rendering then only *reads* that state.
+        Any future change that mutates shared state during rendering must not
+        use the thread pool.
+
+        Args:
+            kept: Blocks that survive dedupe, in discovery order.
+
+        Returns:
+            Mapping of block id to rendered source text.
+
+        """
         if self.workers > 1 and len(kept) > 32:
             with ThreadPoolExecutor(max_workers=self.workers) as pool:
                 texts = list(pool.map(self._render_block, kept))
         else:
             texts = [self._render_block(b) for b in kept]
         return {b.bid: t for b, t in zip(kept, texts)}
+
+    def _check_module_value_usage(self, kept: list[Block]) -> None:
+        """Fail when a project module object is used as a plain value.
+
+        Attribute access on an imported module (``utils.helper()``) is rewritten
+        to the consolidated name, but a bare use (``print(utils)``,
+        ``vars(utils)``) has no consolidated equivalent: the module is pruned
+        and the name would raise ``NameError`` at runtime. Failing loudly is
+        the only safe behaviour.
+
+        Args:
+            kept: Blocks that will be emitted.
+
+        Raises:
+            ResolverError: If a module alias is referenced without an attribute.
+
+        """
+        reported: set[str] = set()
+        for b in kept:
+            attr_starts = {occ.start for occ in b.occs if occ.kind == "attr"}
+            for occ in b.occs:
+                if occ.kind != "name" or occ.start in attr_starts:
+                    continue
+                target = self.env[b.module].get(occ.name)
+                if target is None or target[0] != "mod":
+                    continue
+                if self._target_name(target, occ.name) is not None:
+                    continue
+                key = f"{b.module}:{occ.name}"
+                if key in reported:
+                    continue
+                reported.add(key)
+                raise ResolverError(
+                    f"{b.module}: module '{occ.name}' (from '{target[1]}') is used as a "
+                    "value, which cannot survive consolidation — use --preserve-modules "
+                    "or replace it with explicit attribute access"
+                )
+
+    def _warn_stale_forward_refs(self, kept: list[Block]) -> None:
+        """Warn about string annotations that mention a renamed object.
+
+        ``def f(x: "Foo")`` keeps ``Foo`` inside a string, so renaming the
+        class leaves a stale reference that breaks ``typing.get_type_hints``.
+
+        Args:
+            kept: Blocks that will be emitted.
+
+        """
+        renamed = {orig: final for _mod, orig, final in self._renamed_log}
+        if not renamed:
+            return
+        for b in kept:
+            text = b.source.decode("utf-8", "replace")
+            hits: set[str] = set()
+            for match in _STRING_RE.finditer(text):
+                body = match.group("body")
+                if not _ANNOTATION_LIKE_RE.match(body):
+                    continue
+                hits.update(n for n in _IDENT_RE.findall(body) if n in renamed)
+            if hits:
+                self._warn_once(
+                    f"{b.module}: string literal(s) reference renamed name(s) "
+                    f"{', '.join(sorted(hits))} — forward references in annotations "
+                    "may be stale"
+                )
+
+    def _strip_internal_imports(self, guard: GuardBlock) -> str:
+        """Remove hoisted internal imports from a guard's verbatim text.
+
+        Args:
+            guard: The guard whose internal import lines should be removed.
+
+        Returns:
+            The remaining guard text, or an empty string when nothing
+            meaningful is left (the guard should then be dropped).
+
+        """
+        internal = [
+            (spec, snippet)
+            for spec, snippet in guard.spec_lines
+            if self._is_internal(spec)
+        ]
+        if not internal:
+            return guard.text
+        internal.sort(key=lambda pair: -len(pair[1]))
+        # Removing a statement can leave an empty suite (``try:``/``except:``),
+        # so try the clean removal first and fall back to ``pass``.
+        for replacement in ("", "pass"):
+            text = guard.text
+            for _spec, snippet in internal:
+                if replacement:
+                    index = text.find(snippet)
+                    indent = ""
+                    if index != -1:
+                        line_start = text.rfind("\n", 0, index) + 1
+                        indent = text[line_start:index]
+                    text = text.replace(indent + snippet, indent + replacement, 1)
+                else:
+                    text = text.replace(snippet, "", 1)
+            lines = [line for line in text.splitlines() if line.strip()]
+            meaningful = [line for line in lines if not _GUARD_HEADER_RE.match(line)]
+            if not meaningful:
+                return ""
+            candidate = "\n".join(lines).rstrip()
+            try:
+                compile(candidate + "\n", "<guarded imports>", "exec")
+            except SyntaxError:
+                continue
+            return candidate
+        return ""
 
     def _assemble(
         self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]
@@ -626,9 +1052,13 @@ class Resolver:
         tail_ids = {b.bid for b in tail}
         head = [b for b in body if b.bid not in tail_ids]
         ordered = topo_order(
-            head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b))
+            head,
+            deps,
+            lambda b: _RANK[b.kind],
+            lambda b: (_RANK[b.kind], *keyfn(b)),
+            strict=self.strict,
         )
-        tail_ordered = topo_order(tail, deps, lambda b: 0, keyfn)
+        tail_ordered = topo_order(tail, deps, lambda b: 0, keyfn, strict=self.strict)
         rendered: list[RenderedBlock] = []
         for b in ordered:
             txt = texts[b.bid]
@@ -647,21 +1077,11 @@ class Resolver:
             )
         # Handle generate_guard: if requested and no mains, create one calling main()
         if self.generate_guard and not mains:
-            # Find main functions
-            mains_funcs = [
-                b
-                for b in kept
-                if b.kind == FUNC and b.primary in ("main", self.main_name or "main")
-            ]
-            if mains_funcs:
-                guard_text = (
-                    'if __name__ == "__main__":\n    main()'
-                    if not self.main_name
-                    else f'if __name__ == "__main__":\n    {self.main_name}()'
-                )
+            generated = self._generated_guard(kept, emit_keys)
+            if generated is not None:
                 rendered.append(
                     RenderedBlock(
-                        "entry", MAIN, guard_text, origin="generated", module="__main__"
+                        "entry", MAIN, generated, origin="generated", module="__main__"
                     )
                 )
                 logger.info("Auto-generated __main__ guard")
@@ -676,8 +1096,11 @@ class Resolver:
         guards: list[str] = []
         for mi in self.modules.values():
             for g in mi.guards:
-                if g.text not in guards:
-                    guards.append(g.text)
+                text = self._strip_internal_imports(g) if g.internal else g.text
+                if not text:
+                    continue
+                if text not in guards:
+                    guards.append(text)
         plan = Plan(
             future_names=sorted(self.future_names),
             imports_text=build_import_section(emit_keys, self.ext_final),
@@ -689,16 +1112,54 @@ class Resolver:
         self._exports(plan, kept)
         return plan
 
+    def _generated_guard(self, kept: list[Block], emit_keys: set[tuple]) -> str | None:
+        """Build a ``if __name__ == "__main__":`` guard for the output.
+
+        Handles renamed ``main`` functions and async entry points, which must be
+        driven through ``asyncio.run`` instead of being called unawaited.
+
+        Args:
+            kept: Blocks that will be emitted.
+            emit_keys: Import keys to emit; ``asyncio`` is added when needed.
+
+        Returns:
+            The guard source, or ``None`` when no entry point was found.
+
+        """
+        wanted = self.main_name or "main"
+        candidates = [b for b in kept if b.kind == FUNC and wanted in b.names]
+        if not candidates:
+            return None
+        block = candidates[0]
+        name = self.final.get((block.bid, wanted)) or wanted
+        if _ASYNC_DEF_RE.match(block.source.strip()):
+            emit_keys.add(("import", "asyncio", None))
+            return 'if __name__ == "__main__":\n' f"    asyncio.run({name}())"
+        return f'if __name__ == "__main__":\n    {name}()'
+
     def _exports(self, plan: Plan, kept: list[Block]) -> None:
-        # Handle __all__ modes
+        """Compute the public API re-exported by the generated ``__init__.py``.
+
+        Applies ``--all`` modes, keeps dunder metadata attributes, honours
+        explicitly declared names, and records aliased re-exports from package
+        ``__init__`` modules (``from .sub import helper as public_helper``).
+
+        Args:
+            plan: Plan being assembled; ``exports`` and ``reexports`` are filled.
+            kept: Blocks that will be emitted.
+
+        """
         allowed: set[str] | None = None
         declared_all_union: set[str] = set()
+        # An explicitly declared empty __all__ must not look like "no __all__".
+        declared_any = any(mi.declared_all is not None for mi in self.modules.values())
         for mi in self.modules.values():
-            if mi.declared_all:
+            if mi.declared_all is not None:
                 declared_all_union.update(mi.declared_all)
+        explicit = set(declared_all_union)
 
         if self.all_mode == "respect" or (
-            self.respect_all and self.all_mode == "ignore" and declared_all_union
+            self.respect_all and self.all_mode == "ignore" and declared_any
         ):
             # respect: only those in declared_all
             allowed = set()
@@ -721,19 +1182,15 @@ class Resolver:
                 logger.warning(
                     "No __all__ members could be resolved; exports will be empty"
                 )
-        elif self.all_mode == "merge":
-            # merge: union of declared_all plus all public names
-            allowed = (
-                None  # we will include all public, but ensure declared_all are included
-            )
-            # We'll compute normal exports then add any declared_all that were missed
-        elif self.all_mode == "recompute":
-            # recompute: all public names sorted, ignoring original declarations
-            allowed = None
-        elif self.all_mode == "ignore":
-            allowed = None
 
-        # Handle module re-exports: if a module does `from .x import y` and y is in its __all__, it should be exported
+        def visible(name: str) -> bool:
+            """Return whether ``name`` may appear in the generated ``__all__``."""
+            if name == "__all__":
+                return False
+            if name in explicit or name in DUNDER_EXPORTS:
+                return True
+            return not name.startswith("_")
+
         groups = {CLASS: "classes", FUNC: "functions"}
         seen: set[str] = set()
         for b in kept:
@@ -743,17 +1200,42 @@ class Resolver:
                 fin = self.final.get((b.bid, n))
                 if fin is None:
                     continue
-                if fin.startswith("_") or fin in seen:
+                if not visible(n) or fin in seen:
                     continue
                 # respect filter
                 if allowed is not None and fin not in allowed:
                     continue
                 seen.add(fin)
                 plan.exports[groups.get(b.kind, "constants")].append(fin)
+
+        # Aliased re-exports performed by package __init__ modules.
+        for _module, local, tgt in self._reexport_specs:
+            if not visible(local):
+                continue
+            if allowed is not None and local not in allowed:
+                continue
+            if tgt[0] == "def":
+                block = self._canon(tgt[1])
+                fin = self.final.get((block.bid, tgt[2]))
+                if not fin:
+                    continue
+                group = groups.get(block.kind, "constants")
+            elif tgt[0] == "ext":
+                fin = self.ext_final.get(tgt[1], local)
+                group = "constants"
+            else:
+                continue
+            exported = local
+            if exported in seen:
+                continue
+            seen.add(exported)
+            plan.exports[group].append(exported)
+            if fin != exported:
+                plan.reexports[exported] = fin
+
         # For merge, add any declared_all members not yet exported (including re-exports)
         if self.all_mode == "merge":
-            for n in declared_all_union:
-                # Resolve to final name if possible
+            for n in sorted(declared_all_union):
                 for m, mi in self.modules.items():
                     if mi.declared_all and n in mi.declared_all:
                         tgt = self._resolve_symbol(m, n)
@@ -761,7 +1243,6 @@ class Resolver:
                             fin = self.final.get((self._canon(tgt[1]).bid, tgt[2]))
                             if fin and fin not in seen:
                                 seen.add(fin)
-                                # Determine group by finding block kind
                                 blk = tgt[1]
                                 plan.exports[groups.get(blk.kind, "constants")].append(
                                     fin

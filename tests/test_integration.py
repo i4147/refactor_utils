@@ -8,6 +8,7 @@ from refactor_utils.core import consolidate
 
 
 def test_end_to_end_single_mode(sample_project, tmp_path):
+    """Check the full single-mode pipeline on a sample package."""
     out = tmp_path / "out"
     result = consolidate(sample_project, out, mode="single")
     assert (out / "_consolidated.py").exists()
@@ -18,6 +19,7 @@ def test_end_to_end_single_mode(sample_project, tmp_path):
 
 
 def test_end_to_end_src_layout(src_layout_project, tmp_path):
+    """Check consolidation of a ``src/`` layout project."""
     out = tmp_path / "out"
     result = consolidate(src_layout_project, out)
     assert result.modules >= 1
@@ -25,6 +27,7 @@ def test_end_to_end_src_layout(src_layout_project, tmp_path):
 
 
 def test_end_to_end_namespace_package(namespace_project, tmp_path):
+    """Check consolidation of a namespace package."""
     out = tmp_path / "out"
     result = consolidate(namespace_project, out)
     assert result.modules >= 1
@@ -34,6 +37,7 @@ def test_end_to_end_namespace_package(namespace_project, tmp_path):
 
 
 def test_cli_subprocess(tmp_path):
+    """Check that the CLI works as a subprocess entry point."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
@@ -69,6 +73,7 @@ def test_cli_subprocess(tmp_path):
 
 
 def test_circular_import_handling(tmp_path):
+    """Check that circular imports still produce usable output."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "a.py").write_text(
@@ -94,6 +99,7 @@ def test_circular_import_handling(tmp_path):
 
 def test_output_inside_source(sample_project, tmp_path):
     # Output inside source tree should be skipped during discovery
+    """Check that writing the output inside the source tree is safe."""
     out = sample_project / "output"
     result = consolidate(sample_project, out)
     assert out.exists()
@@ -102,6 +108,7 @@ def test_output_inside_source(sample_project, tmp_path):
 
 
 def test_large_project_with_many_files(tmp_path):
+    """Check consolidation of a project with many modules."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     for i in range(20):
@@ -114,6 +121,7 @@ def test_large_project_with_many_files(tmp_path):
 
 def test_programmatic_api():
     # Test that public API is importable
+    """Check the documented programmatic API end to end."""
     from refactor_utils import consolidate, ConsolidationError, ConsolidationResult
 
     assert callable(consolidate)
@@ -121,6 +129,7 @@ def test_programmatic_api():
 
 
 def test_version():
+    """Check that the package exposes a version string."""
     from refactor_utils import __version__
 
     assert isinstance(__version__, str)

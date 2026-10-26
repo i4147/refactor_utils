@@ -12,6 +12,7 @@ from refactor_utils.discovery import (
 
 
 def test_discover_basic(sample_project):
+    """Check that python files are discovered with dotted module names."""
     files = discover(sample_project, skip_dirs=[])
     modules = {f.module for f in files}
     assert "pkg" in modules or "pkg.a" in modules or any("a" in m for m in modules)
@@ -21,6 +22,7 @@ def test_discover_basic(sample_project):
 
 def test_discover_exclude_defaults(sample_project):
     # conftest.py should be excluded by default
+    """Check that default excludes drop tests and setup files."""
     (sample_project / "conftest.py").write_text("import pytest\n")
     files = discover(sample_project)
     names = [f.path.name for f in files]
@@ -28,6 +30,7 @@ def test_discover_exclude_defaults(sample_project):
 
 
 def test_discover_include_overrides_default(tmp_path):
+    """Check that ``include`` re-includes a default-excluded file."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "conftest.py").write_text("X=1\n")
@@ -39,6 +42,7 @@ def test_discover_include_overrides_default(tmp_path):
 
 
 def test_discover_exclude_always_wins(tmp_path):
+    """Check that an explicit exclude beats ``include``."""
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "conftest.py").write_text("X=1\n")
@@ -47,6 +51,7 @@ def test_discover_exclude_always_wins(tmp_path):
 
 
 def test_detect_base_src_layout(src_layout_project):
+    """Check that ``src/`` layouts resolve to the right base directory."""
     base = detect_base(src_layout_project)
     # src layout detection should return src dir when src/mypkg/__init__.py exists
     assert base.name == "src" or base == src_layout_project
@@ -57,6 +62,7 @@ def test_detect_base_src_layout(src_layout_project):
 
 
 def test_discover_namespace_package(namespace_project):
+    """Check that PEP 420 namespace packages are discovered."""
     files = discover(namespace_project)
     # Should discover mod and sub.other even without __init__.py
     modules = {f.module for f in files}
@@ -64,6 +70,7 @@ def test_discover_namespace_package(namespace_project):
 
 
 def test_discover_single_file(tmp_path):
+    """Check that a single ``.py`` file is accepted as input."""
     single = tmp_path / "hello.py"
     single.write_text("x=1\n")
     files = discover(single)
@@ -72,6 +79,7 @@ def test_discover_single_file(tmp_path):
 
 
 def test_discover_output_inside_source(sample_project, tmp_path):
+    """Check that the output directory is not scanned as input."""
     output = sample_project / "output"
     output.mkdir()
     (output / "should_ignore.py").write_text("Z=1\n")
@@ -81,6 +89,7 @@ def test_discover_output_inside_source(sample_project, tmp_path):
 
 def test_discover_symlink(sample_project, tmp_path):
     # Create symlink to a python file
+    """Check that symlinked sources are handled without duplication."""
     target = sample_project / "a.py"
     link = sample_project / "link_to_a.py"
     try:
@@ -93,6 +102,7 @@ def test_discover_symlink(sample_project, tmp_path):
 
 
 def test_discover_data_files(sample_project):
+    """Check that non-python data files are discovered."""
     data_files = discover_data_files(sample_project, copy_data=True)
     rels = {df.relative for df in data_files}
     assert any("sample.json" in r for r in rels)
@@ -101,11 +111,13 @@ def test_discover_data_files(sample_project):
 
 
 def test_discover_data_files_no_copy(sample_project):
+    """Check that data discovery can be disabled."""
     data_files = discover_data_files(sample_project, copy_data=False)
     assert data_files == []
 
 
 def test_discover_data_files_glob_filter(sample_project):
+    """Check that data discovery honours include/exclude globs."""
     data_files = discover_data_files(sample_project, copy_data=True)
     # Filter via data_glob in core is separate; here we test that discovery finds json
     json_files = [df for df in data_files if df.relative.endswith(".json")]
@@ -114,6 +126,7 @@ def test_discover_data_files_glob_filter(sample_project):
 
 def test_detect_pyproject_config(tmp_path):
     # No config -> empty
+    """Check that ``[tool.pyrefactor]`` is read from ``pyproject.toml``."""
     cfg = detect_pyproject_config(tmp_path)
     assert cfg == {}
 
@@ -131,6 +144,7 @@ def test_detect_pyproject_config(tmp_path):
 
 
 def test_excluded_file_globs_contains_expected():
+    """Check that the default exclusion list is intact."""
     assert "conftest.py" in EXCLUDED_FILE_GLOBS
     assert "__main__.py" in EXCLUDED_FILE_GLOBS
     assert "iwgfyrkugf.py" in EXCLUDED_FILE_GLOBS

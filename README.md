@@ -110,7 +110,7 @@ usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
                   [--format] [--post-format] [--formatter {black,ruff}]
                   [--validate] [--validate-import] [--strict]
                   [--fail-on-warning] [--max-skipped N]
-                  [--allow-syntax-errors]
+                  [--allow-syntax-errors] [--eol {lf,crlf,preserve}]
                   [--log-level {TRACE,DEBUG,INFO,WARNING,ERROR}]
                   [--log-file LOG_FILE] [--version]
                   source
@@ -157,14 +157,15 @@ All flags have concise help strings referencing the module they touch (e.g., `[r
 | `--fail-on-warning` | `false` | Exit 2 if any warning emitted | `core.py` | No |
 | `--max-skipped N` | `None` | Fail if `len(skipped) > N` (e.g., `--max-skipped 0` enforces no skips) | `core.py` | No |
 | `--allow-syntax-errors` | `false` | Try partial parse for syntax-error files instead of skipping (warn, may produce invalid output) | `parser.py`, `core.py` | No |
+| `--eol {lf,crlf,preserve}` | `lf` | Line endings for generated files; `preserve` follows the input files | `core.py` | No |
 | `--jobs N` | `None` | Alias for `--workers` | `cli.py` | No |
 | `--workers / -j` | `CPU` | Parallel workers (default CPU count) | `core.py` | No (existing) |
 | `--executor {process,thread}` | `process` | Executor type | `core.py` | No (existing) |
 | `--no-parallel` | `false` | Disable parallel (workers=1) | `core.py` | No |
 | `--progress` / `--progress-bar` | `false` | Show tqdm progress bar (falls back to log) | `core.py` | No |
 | `--validate` | `false` | Compile output (`compile(..., "exec")`); with `--validate-import` also smoke-import | `core.py` | No |
-| `--validate-import` | `false` | Smoke-import generated module via `importlib` | `core.py` | No |
-| `--strict` | `false` | Exit 1 if any file skipped (existing) | `core.py` | No (existing) |
+| `--validate-import` | `false` | Smoke-import generated module via `importlib` (executes top-level code; a warning is logged first) | `core.py` | No |
+| `--strict` | `false` | Exit 1 if any file was skipped; also refuses to write output when a warning means the result may be wrong (unresolved name lookups, computed `__all__`, unresolvable internal imports) and rejects import cycles | `core.py` | No (existing) |
 | `--mode {single,package,module,flat,split}` | `single` | Output layout (keeps `single` default) | `core.py`, `writer.py` | No |
 
 All new flags preserve `ConsolidationResult` contract (added fields, not changed) and are documented in `build_parser()`.

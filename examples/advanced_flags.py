@@ -1,5 +1,4 @@
-"""
-Advanced flags demo: rename strategies, dedupe, all modes, source maps.
+"""Advanced flags demo: rename strategies, dedupe, all modes, source maps.
 
 Run:
     python examples/advanced_flags.py
@@ -12,6 +11,7 @@ from refactor_utils.core import consolidate
 
 
 def demo_rename_strategy():
+    """Show how each rename strategy disambiguates collisions."""
     print("=== Rename Strategy: prefix vs suffix vs module_path ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -27,6 +27,7 @@ def demo_rename_strategy():
 
 
 def demo_dedupe():
+    """Show how each dedupe mode treats duplicate definitions."""
     print("\n=== Dedupe: none vs safe vs aggressive ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -40,6 +41,7 @@ def demo_dedupe():
 
 
 def demo_all_modes():
+    """Show how each ``__all__`` mode affects exports."""
     print("\n=== __all__ handling: ignore / respect / merge / recompute ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"
@@ -54,6 +56,7 @@ def demo_all_modes():
 
 
 def demo_source_map():
+    """Show the source-map comments added per block."""
     print("\n=== Source map + preserve-modules ===")
     with tempfile.TemporaryDirectory() as tmp:
         pkg = Path(tmp) / "pkg"

@@ -1,5 +1,4 @@
-"""
-test_helpers.py — Manual discovery/parser/resolver/writer checks run via bash in session.
+"""test_helpers.py — Manual discovery/parser/resolver/writer checks run via bash in session.
 
 These reproduce the inline python tests we executed before creating tests/test_*.py.
 They can be run as: python tools/arena/test_helpers.py
@@ -12,6 +11,7 @@ from pathlib import Path
 
 
 def test_discovery():
+    """Run manual discovery checks against temporary projects."""
     print("=== discovery manual ===")
     from refactor_utils.discovery import discover, discover_data_files, detect_base
 
@@ -28,6 +28,7 @@ def test_discovery():
 
 
 def test_parser():
+    """Run manual parser checks against representative sources."""
     print("=== parser manual ===")
     from refactor_utils.parser import parse_module_file
 
@@ -54,6 +55,7 @@ def test_parser():
 
 
 def test_resolver_writer():
+    """Run manual resolver and writer checks."""
     print("=== resolver/writer manual ===")
     from refactor_utils.parser import parse_module_file
     from refactor_utils.resolver import Resolver
@@ -80,6 +82,7 @@ def test_resolver_writer():
 
 
 def test_core():
+    """Run manual end-to-end consolidation checks with data files."""
     print("=== core manual (data files) ===")
     import sys
     from pathlib import Path as _Path
@@ -112,6 +115,7 @@ def test_core():
 
 
 def test_cli():
+    """Run manual CLI checks."""
     print("=== cli manual ===")
     from refactor_utils.cli import build_parser
 
