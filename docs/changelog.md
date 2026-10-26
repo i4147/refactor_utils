@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — prompt.md 3.4 (`nonlocal`) + 5.2 (post-rename dedupe)
+
+- `global`/`nonlocal` declarations are tracked per scope (`parser._scope_declarations`,
+  `_nested_nonlocals`, `_function_shadow`): a name declared `nonlocal` keeps the
+  same spelling as the enclosing function binding it refers to, instead of being
+  renamed on one side and left alone on the other (which silently split one
+  variable into two). `global` declarations remove the inherited shadow, so a
+  renamed module-level object is written consistently inside the function
+  (previously `global x` could stay `x` while the module object became `b_x`).
+- A second dedupe pass runs *after* `_assign_names`/`_resolve_ext_conflicts`
+  (`resolver._dedupe_post_rename`, keyed on `_block_signature`). It compares
+  resolve-to-the-same-thing identities instead of pre-rename text, so blocks
+  that differ only by `from .models import User as U` vs `from .models import
+  User`, or by an import alias, are recognised as duplicates. It runs to a fixed
+  point and the imports that only the dropped duplicate used are pruned.
+
 ## Unreleased — prompt.md follow-up: correctness fixes + docstrings
 
 Correctness (silently wrong output before):

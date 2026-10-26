@@ -30,11 +30,24 @@ Full plan from `prompt.md` (see README for table). Each item below is covered by
 
 ## Names & Scoping
 
-- Duplicate identical bodies → `dedupe safe|aggressive`.
+- Duplicate identical bodies → `dedupe safe|aggressive`. A second pass runs
+  after renaming (`resolver._dedupe_post_rename`): it fingerprints each block by
+  what its references *resolve to* (canonical project block, or the identity of
+  the imported object), so blocks that only looked different because of an
+  import alias (`from .models import User as U` vs `from .models import User`)
+  or a conflict-renamed import are still collapsed, and the imports only those
+  duplicates used are pruned. It runs to a fixed point and never merges blocks
+  with different names or different bodies.
 - Class-body, comprehensions, lambdas, walrus, `match`, `global`/`nonlocal` → `parser._collect_occs` shadow/lazy/cls handling.
 - `for` targets, `with ... as`, `except ... as`, `match` captures and
   comprehension variables shadow module-level names, so a rename never touches
   them; the class referenced by a `case Point():` pattern *is* renamed.
+- `nonlocal x` is tracked by `parser._function_shadow`: the name is shadowed in
+  the enclosing function too, so the local binding, the nested uses and the
+  declaration itself keep one spelling (a rename can no longer split the
+  variable or point `nonlocal` at a different scope). `global x` removes the
+  inherited shadow, so it follows the renamed module-level object instead of
+  staying stale behind a `for`/`with` binding.
 - Using an imported module as a value (`print(utils)`) is a hard error; string
   forward references to renamed objects produce a warning.
 - Decorators/annotations/default args → pushed as `shadow` + `lazy` (future_annotations).

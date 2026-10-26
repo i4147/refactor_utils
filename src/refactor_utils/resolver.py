@@ -278,7 +278,40 @@ class Resolver:
         )
 
     def _canon(self, b: Block) -> Block:
-        return self.canon.get(b.bid, b)
+        """Return the block ``b`` was deduplicated into (``b`` when kept).
+
+        Chained mappings are followed defensively: ``_flatten_canon`` keeps
+        them flat, but rendering must never loop even if a future pass adds a
+        link.
+
+        Args:
+            b: Block to look up.
+
+        Returns:
+            The surviving block that replaced ``b``.
+
+        """
+        seen = 0
+        while b.bid in self.canon and seen <= len(self.canon):
+            b = self.canon[b.bid]
+            seen += 1
+        return b
+
+    def _flatten_canon(self) -> None:
+        """Collapse canonical chains so :meth:`_canon` is a single lookup.
+
+        Repeated dedupe passes can drop a block that was itself the canonical
+        replacement for an earlier duplicate. Rewriting every entry to point
+        straight at the surviving block keeps lookups constant time (and keeps
+        the dict mutation out of the parallel rendering phase).
+        """
+        for bid in list(self.canon):
+            target = self.canon[bid]
+            seen = 0
+            while target.bid in self.canon and seen <= len(self.canon):
+                target = self.canon[target.bid]
+                seen += 1
+            self.canon[bid] = target
 
     def _prefix(self, module: str) -> str:
         parts = module.split(".")
@@ -365,8 +398,8 @@ class Resolver:
         """Build the consolidation plan.
 
         Runs environment construction, reference analysis, dedupe, renaming,
-        import resolution and rendering, in that order. All mutation happens
-        here, before any rendering is parallelised.
+        import resolution, a second (post-rename) dedupe and rendering, in that
+        order. All mutation happens here, before any rendering is parallelised.
 
         Returns:
             The complete :class:`Plan` ready to be rendered.
@@ -381,34 +414,16 @@ class Resolver:
         self._analyse()
         self._dedupe()
         kept = [b for b in self.blocks if b.bid not in self.canon]
-        used = set().union(*(self.ext_keys[b.bid] for b in kept)) if kept else set()
-        emit_keys = set(used)
-        # imports_mode handling
-        if self.imports_mode == "keep":
-            for env in self.env.values():
-                emit_keys |= {
-                    target[1]
-                    for target in env.values()
-                    if target[0] == "ext" and target[1] not in self._nested_ext_keys
-                }
-        elif self.imports_mode == "strict":
-            # In strict, we prune but also warn if unused imports exist
-            all_ext = {
-                t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"
-            }
-            unused = all_ext - used
-            if unused:
-                for k in unused:
-                    self._warn_once(
-                        f"Strict imports: unused import {k} would be pruned"
-                    )
-        # keep_unused legacy already mapped
-        emit_keys |= self.star_keys
-        emit_keys |= self._collect_reexports()
-        emit_keys |= self._guard_used_keys()
-        emit_keys |= self._verbatim_keys
+        emit_keys = self._emit_keys(kept)
         self._assign_names(kept, emit_keys)
         self._resolve_ext_conflicts(emit_keys)
+        # Renaming can turn two formerly distinct blocks into the same code
+        # (aliased imports, project references that now share a name). Dedupe
+        # again with post-rename identities and drop imports only they used.
+        before_dedupe = len(kept)
+        kept = self._dedupe_post_rename(kept)
+        if len(kept) != before_dedupe:
+            emit_keys = self._emit_keys(kept, report_strict=False)
         self._check_module_value_usage(kept)
         self._warn_stale_forward_refs(kept)
         if self.star_keys:
@@ -657,6 +672,44 @@ class Resolver:
             # Side-effect-only imports are those where import is never referenced but kept for side effect
             # We keep guards verbatim, so they are not lost
 
+    def _emit_keys(self, kept: list[Block], report_strict: bool = True) -> set[tuple]:
+        """Collect the external import keys that must be emitted.
+
+        Args:
+            kept: Blocks that will be rendered.
+            report_strict: Emit the ``imports=strict`` warnings for unused
+                imports. Suppressed when recomputing after a dedupe pass, so
+                the same imports are not reported twice.
+
+        Returns:
+            External import keys (plus star/guard/verbatim extras) to render.
+
+        """
+        used = set().union(*(self.ext_keys[b.bid] for b in kept)) if kept else set()
+        emit_keys = set(used)
+        # imports_mode handling
+        if self.imports_mode == "keep":
+            for env in self.env.values():
+                emit_keys |= {
+                    target[1]
+                    for target in env.values()
+                    if target[0] == "ext" and target[1] not in self._nested_ext_keys
+                }
+        elif self.imports_mode == "strict" and report_strict:
+            # In strict, we prune but also warn if unused imports exist
+            all_ext = {
+                t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"
+            }
+            unused = all_ext - used
+            for k in sorted(unused, key=repr):
+                self._warn_once(f"Strict imports: unused import {k} would be pruned")
+        # keep_unused legacy already mapped
+        emit_keys |= self.star_keys
+        emit_keys |= self._collect_reexports()
+        emit_keys |= self._guard_used_keys()
+        emit_keys |= self._verbatim_keys
+        return emit_keys
+
     def _dedupe(self) -> None:
         if self.dedupe_mode == "none":
             logger.info("Dedupe disabled (--dedupe none)")
@@ -700,6 +753,121 @@ class Resolver:
                     blocks[0].module,
                 )
                 # Aggressive may also warn about differing bodies with same name (not deduped, handled in _assign_names)
+
+    def _block_signature(self, b: Block) -> tuple[str, ...]:
+        """Build a rename-invariant fingerprint of a block.
+
+        Every occurrence that resolves to a project definition is replaced by
+        a token made of its canonical block id and original name; every
+        external occurrence is replaced by the identity of the imported
+        object. Two blocks with the same fingerprint render to the same code
+        once their own names are ignored, no matter how differently they
+        imported or aliased what they use.
+
+        Args:
+            b: Block to fingerprint.
+
+        Returns:
+            Literal text chunks interleaved with identity tokens.
+
+        """
+        env = self.env[b.module]
+        parts: list[str] = []
+        pos = 0
+        for occ in sorted(b.occs, key=lambda o: (o.start, o.end)):
+            if occ.kind == "nested_import":
+                # Nested imports are kept verbatim when rendering, so leaving
+                # them in the literal text keeps the comparison conservative.
+                continue
+            if occ.kind == "name":
+                tgt = env.get(occ.name)
+            else:
+                tgt = self._resolve_dotted(b.module, occ.obj, occ.name)
+            token: str | None = None
+            if tgt is not None and tgt[0] == "def":
+                canon = self._canon(tgt[1])
+                token = (
+                    f"\x00self\x00{tgt[2]}\x00"
+                    if canon is b
+                    else f"\x00def\x00{canon.bid}\x00{tgt[2]}\x00"
+                )
+            elif tgt is not None and tgt[0] == "ext":
+                token = f"\x00ext\x00{_ext_identity(tgt[1])!r}\x00"
+            if token is None or occ.start < pos:
+                continue
+            parts.append(b.source[pos : occ.start].decode("utf-8", "replace"))
+            parts.append(token)
+            pos = occ.end
+        parts.append(b.source[pos:].decode("utf-8", "replace"))
+        return tuple(parts)
+
+    def _dedupe_post_rename(self, kept: list[Block]) -> list[Block]:
+        """Drop duplicates that only become identical *after* renaming.
+
+        :meth:`_dedupe` runs before names are assigned, so it compares
+        pre-rename external references. Two blocks can therefore be textually
+        different and still end up as the exact same code: ``from .models
+        import User as U`` and ``from .models import User`` resolve to the same
+        project object, and two imports that were aliased apart during
+        ``_resolve_ext_conflicts`` may resolve to the same external name.
+
+        This pass keys on :meth:`_block_signature`, which embeds those
+        post-rename identities, so it recognises exactly those duplicates and
+        leaves genuinely different blocks alone. It runs to a fixed point
+        because dropping a duplicate can make its callers duplicates too.
+
+        Args:
+            kept: Blocks that survived the pre-rename dedupe.
+
+        Returns:
+            ``kept`` without the blocks dropped by this pass.
+
+        """
+        if self.dedupe_mode == "none":
+            return kept
+        kinds = (
+            (CONST, CLASS, FUNC)
+            if self.dedupe_mode == "safe"
+            else (CONST, CLASS, FUNC, MISC)
+        )
+        while True:
+            groups: dict[tuple, list[Block]] = defaultdict(list)
+            for b in kept:
+                if b.kind not in kinds:
+                    continue
+                groups[(b.kind, tuple(b.names), self._block_signature(b))].append(b)
+            changed = False
+            for blocks in groups.values():
+                if len(blocks) < 2:
+                    continue
+                blocks.sort(key=lambda x: (x.module.count("."), x.module, x.order))
+                canon = blocks[0]
+                for dup in blocks[1:]:
+                    self.canon[dup.bid] = canon
+                    self._deduped_log.append((dup.module, dup.primary or dup.kind))
+                    logger.info(
+                        "Dropping duplicate {} '{}' from {} (identical to {} "
+                        "after renaming)",
+                        dup.kind,
+                        dup.primary,
+                        dup.module,
+                        canon.module,
+                    )
+                    changed = True
+            if not changed:
+                break
+            kept = [b for b in kept if b.bid not in self.canon]
+        if self.canon:
+            self._flatten_canon()
+        # Renames of dropped blocks are no longer visible in the output.
+        live = {
+            fin
+            for b in kept
+            for n in b.names
+            if (fin := self.final.get((b.bid, n))) is not None
+        }
+        self._renamed_log = [r for r in self._renamed_log if r[2] in live]
+        return kept
 
     def _assign_names(self, kept: list[Block], emit_keys: set[tuple]) -> None:
         ext_loc_modules: dict[str, set[str]] = defaultdict(set)

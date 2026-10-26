@@ -1,5 +1,6 @@
 """Integration tests — end-to-end consolidation scenarios."""
 
+import importlib
 import textwrap
 import subprocess
 import sys
@@ -134,3 +135,45 @@ def test_version():
 
     assert isinstance(__version__, str)
     assert len(__version__) > 0
+
+
+def test_consolidated_nonlocal_closure_runs(tmp_path):
+    """Check that a ``nonlocal`` closure still works in the consolidated package."""
+    pkg = tmp_path / "counterpkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    # ``aother`` sorts first, so the module-level ``total`` of ``zcounter`` is
+    # the one that gets renamed.
+    (pkg / "zcounter.py").write_text(
+        textwrap.dedent(
+            """\
+            total = 2
+            def make_counter(step=1):
+                total = 0
+                def bump():
+                    nonlocal total
+                    total += step
+                    return total
+                return bump
+            """
+        )
+    )
+    (pkg / "aother.py").write_text("total = 41\n")
+    out = tmp_path / "outpkg"
+    consolidate(pkg, out)
+    text = (out / "_consolidated.py").read_text()
+    # The module-level ``total`` of ``zcounter`` is renamed; the closure
+    # variable and its ``nonlocal`` declaration keep one stable name.
+    assert "nonlocal total" in text
+    assert "zcounter_total = 2" in text
+    sys.path.insert(0, str(tmp_path))
+    try:
+        module = importlib.import_module("outpkg")
+        counter = module.make_counter(3)
+        assert counter() == 3
+        assert counter() == 6
+    finally:
+        sys.path.remove(str(tmp_path))
+        stale = [m for m in sys.modules if m.split(".")[0] == "outpkg"]
+        for name in stale:
+            sys.modules.pop(name, None)
