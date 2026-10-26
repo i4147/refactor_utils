@@ -21,10 +21,10 @@ simz.json
 undo/
 *.db
 *.pyc
-*.json
 *.pyi
-*.txt
 .env
 .ropeproject/
 .mypy_cache/
+*.zip
+*.whl
 
