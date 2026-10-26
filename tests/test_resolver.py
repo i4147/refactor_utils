@@ -26,10 +26,13 @@ def make_modules(tmp_path, files: dict[str, str]) -> dict[str, ModuleInfo]:
 
 
 def test_rename_prefix(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "X = 1",
-        "pkg/b.py": "X = 2",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "X = 1",
+            "pkg/b.py": "X = 2",
+        },
+    )
     r = Resolver(mods, rename_strategy="prefix")
     plan = r.build()
     # Should have renamed one X to prefix
@@ -40,10 +43,13 @@ def test_rename_prefix(tmp_path):
 
 
 def test_rename_suffix(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "X = 1",
-        "pkg/b.py": "X = 2",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "X = 1",
+            "pkg/b.py": "X = 2",
+        },
+    )
     r = Resolver(mods, rename_strategy="suffix")
     plan = r.build()
     assert len(plan.renamed) == 1
@@ -51,30 +57,39 @@ def test_rename_suffix(tmp_path):
 
 
 def test_rename_module_path(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "X = 1",
-        "pkg/b.py": "X = 2",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "X = 1",
+            "pkg/b.py": "X = 2",
+        },
+    )
     r = Resolver(mods, rename_strategy="module_path")
     plan = r.build()
     assert any("pkg" in name for _, _, name in plan.renamed)
 
 
 def test_rename_error_raises(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "X = 1",
-        "pkg/b.py": "X = 2",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "X = 1",
+            "pkg/b.py": "X = 2",
+        },
+    )
     r = Resolver(mods, rename_strategy="error")
     with pytest.raises(RuntimeError, match="Name collision"):
         r.build()
 
 
 def test_dedupe_none(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "def foo(): return 1",
-        "pkg/b.py": "def foo(): return 1",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "def foo(): return 1",
+            "pkg/b.py": "def foo(): return 1",
+        },
+    )
     r = Resolver(mods, dedupe="none")
     plan = r.build()
     # Both should be kept but renamed
@@ -83,20 +98,26 @@ def test_dedupe_none(tmp_path):
 
 
 def test_dedupe_safe(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "def foo(): return 1",
-        "pkg/b.py": "def foo(): return 1",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "def foo(): return 1",
+            "pkg/b.py": "def foo(): return 1",
+        },
+    )
     r = Resolver(mods, dedupe="safe")
     plan = r.build()
     assert len(plan.deduped) == 1
 
 
 def test_dedupe_aggressive(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "X = 1",
-        "pkg/b.py": "X = 1",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "X = 1",
+            "pkg/b.py": "X = 1",
+        },
+    )
     r = Resolver(mods, dedupe="aggressive")
     plan = r.build()
     # Aggressive should dedupe consts
@@ -109,9 +130,12 @@ def test_dedupe_aggressive(tmp_path):
 
 
 def test_imports_prune_vs_keep(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "import os\nimport sys\nX = 1\n",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "import os\nimport sys\nX = 1\n",
+        },
+    )
     # prune should drop unused sys/os if not referenced
     r_prune = Resolver(mods, imports_mode="prune")
     plan_prune = r_prune.build()
@@ -119,14 +143,20 @@ def test_imports_prune_vs_keep(tmp_path):
     plan_keep = r_keep.build()
     # keep should have at least as many imports as prune
     # imports_text may contain both, but keep forces emit
-    assert len(plan_keep.imports_text) >= len(plan_prune.imports_text) or plan_keep.imports_text == plan_prune.imports_text
+    assert (
+        len(plan_keep.imports_text) >= len(plan_prune.imports_text)
+        or plan_keep.imports_text == plan_prune.imports_text
+    )
 
 
 def test_all_ignore_vs_respect(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n',
-        "pkg/b.py": 'baz = 3\n',
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n',
+            "pkg/b.py": "baz = 3\n",
+        },
+    )
     r_ignore = Resolver(mods, all_mode="ignore")
     plan_ignore = r_ignore.build()
     assert "foo" in plan_ignore.exports["constants"]
@@ -139,9 +169,12 @@ def test_all_ignore_vs_respect(tmp_path):
 
 
 def test_all_merge(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n',
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n',
+        },
+    )
     r = Resolver(mods, all_mode="merge")
     plan = r.build()
     assert "foo" in plan.exports["constants"]
@@ -149,9 +182,12 @@ def test_all_merge(tmp_path):
 
 
 def test_all_recompute(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n_baz = 3\n',
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": '__all__ = ["foo"]\nfoo = 1\nbar = 2\n_baz = 3\n',
+        },
+    )
     r = Resolver(mods, all_mode="recompute")
     plan = r.build()
     assert "_baz" not in plan.exports["constants"]
@@ -160,10 +196,13 @@ def test_all_recompute(tmp_path):
 
 
 def test_entry_filter(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": 'if __name__ == "__main__": print("a")',
-        "pkg/b.py": 'if __name__ == "__main__": print("b")',
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": 'if __name__ == "__main__": print("a")',
+            "pkg/b.py": 'if __name__ == "__main__": print("b")',
+        },
+    )
     r_all = Resolver(mods, entry=())
     plan_all = r_all.build()
     assert len([b for b in plan_all.blocks if b.section == "entry"]) == 2
@@ -174,19 +213,27 @@ def test_entry_filter(tmp_path):
 
 
 def test_main_name_rename(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "def main(): return 42",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "def main(): return 42",
+        },
+    )
     r = Resolver(mods, main_name="cli_main")
     plan = r.build()
     # final mapping should be cli_main
-    assert any("cli_main" in v for v in plan.exports.values()) or any("cli_main" == fin for fin in r.final.values())
+    assert any("cli_main" in v for v in plan.exports.values()) or any(
+        "cli_main" == fin for fin in r.final.values()
+    )
 
 
 def test_generate_guard(tmp_path):
-    mods = make_modules(tmp_path, {
-        "pkg/a.py": "def my_main(): return 1",
-    })
+    mods = make_modules(
+        tmp_path,
+        {
+            "pkg/a.py": "def my_main(): return 1",
+        },
+    )
     r = Resolver(mods, generate_guard=True)
     plan = r.build()
     # Should not generate guard because no main func named "main"
@@ -194,7 +241,9 @@ def test_generate_guard(tmp_path):
     mods2 = make_modules(tmp_path, {"pkg/b.py": "def main(): return 1"})
     r2 = Resolver(mods2, generate_guard=True)
     plan2 = r2.build()
-    assert any("generated" in b.origin for b in plan2.blocks) or any('__main__' in b.text for b in plan2.blocks)
+    assert any("generated" in b.origin for b in plan2.blocks) or any(
+        "__main__" in b.text for b in plan2.blocks
+    )
 
 
 def test_namespace_source_map_flags(tmp_path):

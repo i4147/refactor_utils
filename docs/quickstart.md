@@ -105,6 +105,8 @@ pyrefactor src/mypackage -o output --pyproject  # auto-detect
 from pathlib import Path
 from refactor_utils import consolidate
 
-result = consolidate(Path("src/mypackage"), Path("output"), mode="single", validate=True)
+result = consolidate(
+    Path("src/mypackage"), Path("output"), mode="single", validate=True
+)
 print(result.modules, result.exports, result.copied_data_files)
 ```

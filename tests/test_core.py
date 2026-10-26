@@ -40,7 +40,9 @@ def test_consolidate_diff(sample_project, tmp_path):
     # Modify source
     (sample_project / "a.py").write_text("X = 999\n")
     result = consolidate(sample_project, out, diff=True)
-    assert result.diff != "" or True  # diff emitted to stdout in real CLI; in core diff is stored
+    assert (
+        result.diff != "" or True
+    )  # diff emitted to stdout in real CLI; in core diff is stored
 
 
 def test_consolidate_stdout(sample_project, tmp_path, capsys):
@@ -103,7 +105,11 @@ def test_consolidate_data_files(sample_project, tmp_path):
     result = consolidate(sample_project, out, copy_data=True)
     assert len(result.copied_data_files) >= 2
     # Check files exist
-    assert (out / "pkg" / "data" / "sample.json").exists() or (out / "data" / "sample.json").exists() or any("sample.json" in str(p) for p in result.copied_data_files)
+    assert (
+        (out / "pkg" / "data" / "sample.json").exists()
+        or (out / "data" / "sample.json").exists()
+        or any("sample.json" in str(p) for p in result.copied_data_files)
+    )
 
     out2 = tmp_path / "out2"
     result2 = consolidate(sample_project, out2, copy_data=False)
@@ -155,11 +161,13 @@ def test_consolidate_config(tmp_path):
     pkg.mkdir()
     (pkg / "a.py").write_text("X=1\n")
     (pkg / "b.py").write_text("X=2\n")
-    (tmp_path / "pyproject.toml").write_text(textwrap.dedent('''\
+    (tmp_path / "pyproject.toml").write_text(
+        textwrap.dedent("""\
         [tool.pyrefactor]
         exclude = ["b.py"]
         rename_strategy = "suffix"
-        '''))
+        """)
+    )
     out = tmp_path / "out"
     result = consolidate(pkg, out, config=tmp_path / "pyproject.toml")
     # b.py should be excluded via config

@@ -16,10 +16,24 @@ def test_help_contains_all_flags():
     p = build_parser()
     help_text = p.format_help()
     for flag in [
-        "--dry-run", "--check", "--stdout", "--config", "--format", "--diff",
-        "--overwrite", "--include", "--rename-strategy", "--dedupe", "--imports",
-        "--all", "--namespace", "--source-map", "--fail-on-warning", "--jobs",
-        "--validate", "--mode",
+        "--dry-run",
+        "--check",
+        "--stdout",
+        "--config",
+        "--format",
+        "--diff",
+        "--overwrite",
+        "--include",
+        "--rename-strategy",
+        "--dedupe",
+        "--imports",
+        "--all",
+        "--namespace",
+        "--source-map",
+        "--fail-on-warning",
+        "--jobs",
+        "--validate",
+        "--mode",
     ]:
         assert flag in help_text, f"missing flag {flag} in help"
 
@@ -127,7 +141,9 @@ def test_cli_include_exclude(tmp_path):
     assert "Y" not in text or "2" not in text or "Y=2" not in text.replace(" ", "")
     # With include, it should be included
     out2 = tmp_path / "out2"
-    rc = main([str(pkg), "-o", str(out2), "--include", "conftest.py", "--log-level", "ERROR"])
+    rc = main(
+        [str(pkg), "-o", str(out2), "--include", "conftest.py", "--log-level", "ERROR"]
+    )
     assert rc == 0
     text2 = (out2 / "_consolidated.py").read_text()
     assert "Y=2" in text2.replace(" ", "") or "Y = 2" in text2

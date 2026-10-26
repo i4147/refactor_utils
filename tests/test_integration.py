@@ -40,7 +40,15 @@ def test_cli_subprocess(tmp_path):
     out = tmp_path / "out"
     # Run via CLI subprocess
     result = subprocess.run(
-        [sys.executable, "-m", "refactor_utils.cli", str(pkg), "-o", str(out), "--overwrite"],
+        [
+            sys.executable,
+            "-m",
+            "refactor_utils.cli",
+            str(pkg),
+            "-o",
+            str(out),
+            "--overwrite",
+        ],
         capture_output=True,
         text=True,
         cwd=str(Path.cwd()),
@@ -49,7 +57,11 @@ def test_cli_subprocess(tmp_path):
     if result.returncode != 0:
         # fallback: try with python -m refactor_utils
         result = subprocess.run(
-            [sys.executable, "-c", f"from refactor_utils.cli import main; main(['{pkg}', '-o', '{out}', '--overwrite'])"],
+            [
+                sys.executable,
+                "-c",
+                f"from refactor_utils.cli import main; main(['{pkg}', '-o', '{out}', '--overwrite'])",
+            ],
             capture_output=True,
             text=True,
         )
@@ -59,16 +71,20 @@ def test_cli_subprocess(tmp_path):
 def test_circular_import_handling(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
-    (pkg / "a.py").write_text(textwrap.dedent('''\
+    (pkg / "a.py").write_text(
+        textwrap.dedent("""\
         from .b import B
         class A(B):
             pass
-        '''))
-    (pkg / "b.py").write_text(textwrap.dedent('''\
+        """)
+    )
+    (pkg / "b.py").write_text(
+        textwrap.dedent("""\
         from .a import A
         class B:
             pass
-        '''))
+        """)
+    )
     out = tmp_path / "out"
     result = consolidate(pkg, out)
     # Should warn about circular dependency but still produce output
@@ -99,11 +115,13 @@ def test_large_project_with_many_files(tmp_path):
 def test_programmatic_api():
     # Test that public API is importable
     from refactor_utils import consolidate, ConsolidationError, ConsolidationResult
+
     assert callable(consolidate)
     assert issubclass(ConsolidationError, RuntimeError)
 
 
 def test_version():
     from refactor_utils import __version__
+
     assert isinstance(__version__, str)
     assert len(__version__) > 0

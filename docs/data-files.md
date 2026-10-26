@@ -10,8 +10,33 @@
 - Identifies data via `DATA_EXTENSIONS` and `DATA_FILENAMES`:
 
 ```python
-DATA_EXTENSIONS = {".json",".yaml",".yml",".toml",".ini",".cfg",".txt",".csv",".tsv",".xml",".html",".css",".js",".md",".pickle",".db",...}
-DATA_FILENAMES = {"requirements.txt","Pipfile","setup.cfg","pyproject.toml","LICENSE",...}
+DATA_EXTENSIONS = {
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".txt",
+    ".csv",
+    ".tsv",
+    ".xml",
+    ".html",
+    ".css",
+    ".js",
+    ".md",
+    ".pickle",
+    ".db",
+    ...,
+}
+DATA_FILENAMES = {
+    "requirements.txt",
+    "Pipfile",
+    "setup.cfg",
+    "pyproject.toml",
+    "LICENSE",
+    ...,
+}
 ```
 
 - Returns `list[DataFile(path, relative)]` where `relative` is `path.relative_to(base)` (base = `detect_base(root)` → project root or `src/`).
@@ -24,10 +49,10 @@ If the project had no data files, returns `[]` (no-op).
 
 ```python
 for df in data_files:
-    dest = output / df.relative            # single/flat/split: output/data.json
+    dest = output / df.relative  # single/flat/split: output/data.json
     # package mode: output/<pkg>/data.json
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(df.path, dest)            # preserves mtime
+    shutil.copy2(df.path, dest)  # preserves mtime
 ```
 
 Filtered by `--data-glob` (repeatable) via `fnmatch`:

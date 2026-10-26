@@ -35,20 +35,63 @@ EXCLUDED_DIRS = {
     ".idea",
     ".vscode",
 }
-EXCLUDED_FILE_GLOBS = ("__main__.py", "conftest.py", "test_*.py", "*_test.py", "setup.py", "iwgfyrkugf.py", "_consolidated.py")
+EXCLUDED_FILE_GLOBS = (
+    "__main__.py",
+    "conftest.py",
+    "test_*.py",
+    "*_test.py",
+    "setup.py",
+    "iwgfyrkugf.py",
+    "_consolidated.py",
+)
 
 # Data files that are commonly part of a Python project and should be preserved
 DATA_EXTENSIONS = {
-    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
-    ".txt", ".csv", ".tsv", ".dat", ".db", ".sqlite", ".pickle", ".pkl",
-    ".xml", ".html", ".css", ".js", ".md", ".rst", ".env", ".example",
-    ".pem", ".key", ".crt", ".sql", ".graphql", ".proto",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".txt",
+    ".csv",
+    ".tsv",
+    ".dat",
+    ".db",
+    ".sqlite",
+    ".pickle",
+    ".pkl",
+    ".xml",
+    ".html",
+    ".css",
+    ".js",
+    ".md",
+    ".rst",
+    ".env",
+    ".example",
+    ".pem",
+    ".key",
+    ".crt",
+    ".sql",
+    ".graphql",
+    ".proto",
 }
 # Also treat files without extension but common data names as data
 DATA_FILENAMES = {
-    "requirements.txt", "requirements-dev.txt", "Pipfile", "Pipfile.lock",
-    "poetry.lock", "setup.cfg", "pyproject.toml", "tox.ini", ".env",
-    "MANIFEST.in", "LICENSE", "LICENCE", "COPYING",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "Pipfile",
+    "Pipfile.lock",
+    "poetry.lock",
+    "setup.cfg",
+    "pyproject.toml",
+    "tox.ini",
+    ".env",
+    "MANIFEST.in",
+    "LICENSE",
+    "LICENCE",
+    "COPYING",
 }
 
 
@@ -56,12 +99,20 @@ def detect_base(root: Path) -> Path:
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"
-    if src.is_dir() and any(p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()):
+    if src.is_dir() and any(
+        p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()
+    ):
         return src
     return root
 
 
-def _is_excluded(path: Path, posix: str, name: str, exclude: tuple[str, ...], include: tuple[str, ...]) -> bool:
+def _is_excluded(
+    path: Path,
+    posix: str,
+    name: str,
+    exclude: tuple[str, ...],
+    include: tuple[str, ...],
+) -> bool:
     """Precedence: default excludes < --include < --exclude.
 
     - If path matches a default glob, it is excluded unless it matches --include.
@@ -70,14 +121,20 @@ def _is_excluded(path: Path, posix: str, name: str, exclude: tuple[str, ...], in
       but cannot override explicit --exclude.
     """
     # Check explicit exclude first (highest priority)
-    if exclude and any(fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in exclude):
+    if exclude and any(
+        fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in exclude
+    ):
         return True
     # Check default globs
     default_hit = any(fnmatch.fnmatch(name, g) for g in EXCLUDED_FILE_GLOBS)
     if default_hit:
         # Allow include to rescue it
-        if include and any(fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in include):
-            logger.debug("Re-included {} via --include (overrode default exclude)", path)
+        if include and any(
+            fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in include
+        ):
+            logger.debug(
+                "Re-included {} via --include (overrode default exclude)", path
+            )
             return False
         logger.debug("Skipping {} (default exclude)", path)
         return True
@@ -116,7 +173,9 @@ def _walk(
             try:
                 target = entry.resolve()
                 # Avoid output-inside-source infinite loops
-                if target in skip or any(str(target).startswith(str(s) + os.sep) for s in skip):
+                if target in skip or any(
+                    str(target).startswith(str(s) + os.sep) for s in skip
+                ):
                     continue
             except OSError:
                 logger.warning("Broken symlink skipped: {}", entry)
@@ -132,7 +191,11 @@ def _walk(
         if entry.is_dir():
             if entry.name in EXCLUDED_DIRS or entry.name.endswith(".egg-info"):
                 # But allow if explicitly included via --include
-                if include and any(fnmatch.fnmatch(entry.as_posix(), pat) or fnmatch.fnmatch(entry.name, pat) for pat in include):
+                if include and any(
+                    fnmatch.fnmatch(entry.as_posix(), pat)
+                    or fnmatch.fnmatch(entry.name, pat)
+                    for pat in include
+                ):
                     pass
                 else:
                     continue
@@ -229,7 +292,9 @@ def discover_data_files(
         for entry in entries:
             if entry.is_dir():
                 if entry.name in EXCLUDED_DIRS or entry.name.endswith(".egg-info"):
-                    if include and any(fnmatch.fnmatch(entry.as_posix(), pat) for pat in include):
+                    if include and any(
+                        fnmatch.fnmatch(entry.as_posix(), pat) for pat in include
+                    ):
                         pass
                     else:
                         continue
@@ -247,9 +312,14 @@ def discover_data_files(
                     continue
                 posix = entry.as_posix()
                 # Apply same exclusion logic
-                if exclude and any(fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(entry.name, pat) for pat in exclude):
+                if exclude and any(
+                    fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(entry.name, pat)
+                    for pat in exclude
+                ):
                     continue
-                if entry.name in EXCLUDED_FILE_GLOBS and not (include and any(fnmatch.fnmatch(posix, pat) for pat in include)):
+                if entry.name in EXCLUDED_FILE_GLOBS and not (
+                    include and any(fnmatch.fnmatch(posix, pat) for pat in include)
+                ):
                     continue
                 # Identify as data file
                 if _is_data_file(entry):

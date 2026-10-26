@@ -32,7 +32,7 @@ def make_plan(tmp_path, files, **resolver_kwargs):
 def test_render_consolidated_basic(tmp_path):
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
     text = render_consolidated(plan, "pkg")
-    assert 'Consolidated from ``pkg``' in text
+    assert "Consolidated from ``pkg``" in text
     assert "X" in text and "1" in text
     assert "Constants" in text
     # Should compile
@@ -41,7 +41,9 @@ def test_render_consolidated_basic(tmp_path):
 
 def test_render_consolidated_source_map(tmp_path):
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\n"})
-    text = render_consolidated(plan, "pkg", source_map=True, preserve_modules=True, namespace=True)
+    text = render_consolidated(
+        plan, "pkg", source_map=True, preserve_modules=True, namespace=True
+    )
     assert "# source:" in text
     assert "# Original module:" in text
     assert "# namespace:" in text
@@ -60,17 +62,23 @@ def test_render_flat(tmp_path):
     plan = make_plan(tmp_path, {"pkg/a.py": "X=1\nY=2\n"})
     text = render_flat(plan, "pkg")
     # Flat should not have section headers
-    assert "# ---------------------------------------------------------------------------" not in text
+    assert (
+        "# ---------------------------------------------------------------------------"
+        not in text
+    )
     assert "X" in text and "1" in text
     compile(text, "_consolidated.py", "exec")
 
 
 def test_render_split(tmp_path):
-    plan = make_plan(tmp_path, {
-        "pkg/a.py": "X=1\n",
-        "pkg/b.py": "class Bar: pass\n",
-        "pkg/c.py": "def foo(): pass\n",
-    })
+    plan = make_plan(
+        tmp_path,
+        {
+            "pkg/a.py": "X=1\n",
+            "pkg/b.py": "class Bar: pass\n",
+            "pkg/c.py": "def foo(): pass\n",
+        },
+    )
     files = render_split(plan, "pkg")
     assert "const.py" in files
     assert "class.py" in files

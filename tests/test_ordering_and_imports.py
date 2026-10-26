@@ -2,12 +2,25 @@
 
 from refactor_utils.ordering import topo_order
 from refactor_utils.models import Block
-from refactor_utils.imports import build_import_section, render_import_line, future_section, _wrap
+from refactor_utils.imports import (
+    build_import_section,
+    render_import_line,
+    future_section,
+    _wrap,
+)
 from refactor_utils.models import ImportSpec
 
 
 def make_block(bid, module, order, kind="const", primary=""):
-    return Block(module=module, kind=kind, names=[primary] if primary else [], source=b"dummy", occs=[], order=order, bid=bid)
+    return Block(
+        module=module,
+        kind=kind,
+        names=[primary] if primary else [],
+        source=b"dummy",
+        occs=[],
+        order=order,
+        bid=bid,
+    )
 
 
 def test_topo_order_simple():

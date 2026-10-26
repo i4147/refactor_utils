@@ -21,7 +21,7 @@ def test_discover_basic(sample_project):
 
 def test_discover_exclude_defaults(sample_project):
     # conftest.py should be excluded by default
-    (sample_project / "conftest.py").write_text('import pytest\n')
+    (sample_project / "conftest.py").write_text("import pytest\n")
     files = discover(sample_project)
     names = [f.path.name for f in files]
     assert "conftest.py" not in names
@@ -30,8 +30,8 @@ def test_discover_exclude_defaults(sample_project):
 def test_discover_include_overrides_default(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
-    (pkg / "conftest.py").write_text('X=1\n')
-    (pkg / "keep.py").write_text('Y=1\n')
+    (pkg / "conftest.py").write_text("X=1\n")
+    (pkg / "keep.py").write_text("Y=1\n")
     files_default = discover(pkg)
     assert not any(f.path.name == "conftest.py" for f in files_default)
     files_include = discover(pkg, include=("conftest.py",))
@@ -41,7 +41,7 @@ def test_discover_include_overrides_default(tmp_path):
 def test_discover_exclude_always_wins(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()
-    (pkg / "conftest.py").write_text('X=1\n')
+    (pkg / "conftest.py").write_text("X=1\n")
     files = discover(pkg, exclude=("conftest.py",), include=("conftest.py",))
     assert not any(f.path.name == "conftest.py" for f in files)
 
@@ -65,7 +65,7 @@ def test_discover_namespace_package(namespace_project):
 
 def test_discover_single_file(tmp_path):
     single = tmp_path / "hello.py"
-    single.write_text('x=1\n')
+    single.write_text("x=1\n")
     files = discover(single)
     assert len(files) == 1
     assert files[0].module == "hello"
@@ -74,7 +74,7 @@ def test_discover_single_file(tmp_path):
 def test_discover_output_inside_source(sample_project, tmp_path):
     output = sample_project / "output"
     output.mkdir()
-    (output / "should_ignore.py").write_text('Z=1\n')
+    (output / "should_ignore.py").write_text("Z=1\n")
     files = discover(sample_project, skip_dirs=[output])
     assert not any("should_ignore" in f.module for f in files)
 
@@ -118,11 +118,13 @@ def test_detect_pyproject_config(tmp_path):
     assert cfg == {}
 
     # With pyproject
-    (tmp_path / "pyproject.toml").write_text(textwrap.dedent('''\
+    (tmp_path / "pyproject.toml").write_text(
+        textwrap.dedent("""\
         [tool.pyrefactor]
         exclude = ["tests/*"]
         rename_strategy = "suffix"
-        '''))
+        """)
+    )
     cfg = detect_pyproject_config(tmp_path)
     assert cfg.get("rename_strategy") == "suffix"
     assert "tests/*" in cfg.get("exclude", [])

@@ -10,6 +10,7 @@ import textwrap
 from pathlib import Path
 from refactor_utils.core import consolidate
 
+
 def demo_rename_strategy():
     print("=== Rename Strategy: prefix vs suffix vs module_path ===")
     with tempfile.TemporaryDirectory() as tmp:
@@ -24,6 +25,7 @@ def demo_rename_strategy():
             print(f"[{strat}] renamed: {result.plan.renamed}" if result.plan else strat)
             print(text.splitlines()[:5])
 
+
 def demo_dedupe():
     print("\n=== Dedupe: none vs safe vs aggressive ===")
     with tempfile.TemporaryDirectory() as tmp:
@@ -36,6 +38,7 @@ def demo_dedupe():
             result = consolidate(pkg, out, dedupe=mode)
             print(f"[{mode}] deduped={len(result.plan.deduped) if result.plan else 0}")
 
+
 def demo_all_modes():
     print("\n=== __all__ handling: ignore / respect / merge / recompute ===")
     with tempfile.TemporaryDirectory() as tmp:
@@ -45,7 +48,10 @@ def demo_all_modes():
         for mode in ["ignore", "respect", "merge", "recompute"]:
             out = Path(tmp) / f"out_{mode}"
             result = consolidate(pkg, out, all_mode=mode)
-            print(f"[{mode}] exports={result.exports} -> {result.plan.exports if result.plan else {}}")
+            print(
+                f"[{mode}] exports={result.exports} -> {result.plan.exports if result.plan else {}}"
+            )
+
 
 def demo_source_map():
     print("\n=== Source map + preserve-modules ===")
@@ -56,6 +62,7 @@ def demo_source_map():
         out = Path(tmp) / "out"
         consolidate(pkg, out, source_map=True, preserve_modules=True, namespace=True)
         print((out / "_consolidated.py").read_text())
+
 
 if __name__ == "__main__":
     demo_rename_strategy()

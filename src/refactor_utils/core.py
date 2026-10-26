@@ -5,7 +5,13 @@ import difflib
 import os
 import sys
 import traceback
-from concurrent.futures import BrokenExecutor, Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    BrokenExecutor,
+    Executor,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+)
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
@@ -47,9 +53,19 @@ class ConsolidationResult:
 
 def _parse_worker(args: tuple) -> tuple[str, ModuleInfo]:
     """Top-level picklable worker for ProcessPoolExecutor."""
-    path_str, module, is_pkg, keep_docstrings, strip_comments, keep_comments, allow_syntax_errors = args
+    (
+        path_str,
+        module,
+        is_pkg,
+        keep_docstrings,
+        strip_comments,
+        keep_comments,
+        allow_syntax_errors,
+    ) = args
     info = parse_module_file(
-        path_str, module, is_pkg,
+        path_str,
+        module,
+        is_pkg,
         keep_docstrings=keep_docstrings,
         strip_comments=strip_comments,
         keep_comments=keep_comments,
@@ -88,7 +104,15 @@ def _parse_all(
                 futures = {
                     pool.submit(
                         _parse_worker,
-                        (str(f.path), f.module, f.is_pkg, keep_docstrings, strip_comments, keep_comments, allow_syntax_errors),
+                        (
+                            str(f.path),
+                            f.module,
+                            f.is_pkg,
+                            keep_docstrings,
+                            strip_comments,
+                            keep_comments,
+                            allow_syntax_errors,
+                        ),
                     ): f
                     for f in todo
                 }
@@ -99,15 +123,22 @@ def _parse_all(
             if show_progress:
                 try:
                     from tqdm import tqdm  # type: ignore
+
                     iterator = tqdm(iterator, total=len(futures), desc="Parsing")
                 except ImportError:
-                    logger.info("Progress bar requested but tqdm not installed — falling back to log")
+                    logger.info(
+                        "Progress bar requested but tqdm not installed — falling back to log"
+                    )
             for fut in iterator:
                 src = futures[fut]
                 try:
                     res = fut.result()
                     # _parse_worker returns (module, info) tuple for process pool
-                    if isinstance(res, tuple) and len(res) == 2 and isinstance(res[1], ModuleInfo):
+                    if (
+                        isinstance(res, tuple)
+                        and len(res) == 2
+                        and isinstance(res[1], ModuleInfo)
+                    ):
                         results[res[0]] = res[1]
                     else:
                         results[src.module] = res
@@ -121,6 +152,7 @@ def _parse_all(
         if show_progress:
             try:
                 from tqdm import tqdm  # type: ignore
+
                 iterator = tqdm(files, desc="Parsing")
             except ImportError:
                 pass
@@ -155,7 +187,9 @@ def _load_config_file(config_path: Path | None, source: Path) -> dict:
             try:
                 import tomli as tomllib  # type: ignore
             except ImportError:
-                logger.warning("tomllib/tomli not available — cannot read config {}", config_path)
+                logger.warning(
+                    "tomllib/tomli not available — cannot read config {}", config_path
+                )
                 return {}
         try:
             with open(config_path, "rb") as f:
@@ -228,11 +262,23 @@ def consolidate(
     # Only override if using defaults and config provides value
     if cfg:
         if not exclude and cfg.get("exclude"):
-            exclude = tuple(cfg["exclude"]) if isinstance(cfg["exclude"], list) else (cfg["exclude"],)
+            exclude = (
+                tuple(cfg["exclude"])
+                if isinstance(cfg["exclude"], list)
+                else (cfg["exclude"],)
+            )
         if not include and cfg.get("include"):
-            include = tuple(cfg["include"]) if isinstance(cfg["include"], list) else (cfg["include"],)
+            include = (
+                tuple(cfg["include"])
+                if isinstance(cfg["include"], list)
+                else (cfg["include"],)
+            )
         if not entry and cfg.get("entry"):
-            entry = tuple(cfg["entry"]) if isinstance(cfg["entry"], list) else (cfg["entry"],)
+            entry = (
+                tuple(cfg["entry"])
+                if isinstance(cfg["entry"], list)
+                else (cfg["entry"],)
+            )
         if cfg.get("rename_strategy") and rename_strategy == "prefix":
             rename_strategy = cfg["rename_strategy"]
         if cfg.get("dedupe") and dedupe == "safe":
@@ -259,13 +305,24 @@ def consolidate(
         workers = 1
     # Discover files first to check output inside source handling and existence
     files = discover(source, exclude=exclude, include=include, skip_dirs=[output])
-    data_files = discover_data_files(source, exclude=exclude, include=include, skip_dirs=[output], copy_data=copy_data)
+    data_files = discover_data_files(
+        source,
+        exclude=exclude,
+        include=include,
+        skip_dirs=[output],
+        copy_data=copy_data,
+    )
     # Handle data_glob additional filtering if provided
     if data_glob:
         import fnmatch
+
         filtered = []
         for df in data_files:
-            if any(fnmatch.fnmatch(df.relative, pat) or fnmatch.fnmatch(Path(df.path).name, pat) for pat in data_glob):
+            if any(
+                fnmatch.fnmatch(df.relative, pat)
+                or fnmatch.fnmatch(Path(df.path).name, pat)
+                for pat in data_glob
+            ):
                 filtered.append(df)
         data_files = filtered
 
@@ -301,10 +358,14 @@ def consolidate(
         raise ConsolidationError("no module could be parsed")
     # Enforce --max-skipped
     if max_skipped is not None and len(skipped) > max_skipped:
-        raise ConsolidationError(f"too many skipped files: {len(skipped)} > --max-skipped {max_skipped}")
+        raise ConsolidationError(
+            f"too many skipped files: {len(skipped)} > --max-skipped {max_skipped}"
+        )
     # Enforce --fail-on-warning
     if fail_on_warning and warnings_acc:
-        raise ConsolidationError(f"fail-on-warning: {len(warnings_acc)} warning(s) emitted")
+        raise ConsolidationError(
+            f"fail-on-warning: {len(warnings_acc)} warning(s) emitted"
+        )
     # Resolver
     resolver = Resolver(
         modules,
@@ -349,14 +410,24 @@ def consolidate(
             try:
                 compile(text, fname, "exec")
             except SyntaxError as exc:
-                logger.error("Generated {} is not valid python: {} (line {})", fname, exc.msg, exc.lineno)
+                logger.error(
+                    "Generated {} is not valid python: {} (line {})",
+                    fname,
+                    exc.msg,
+                    exc.lineno,
+                )
                 if validate:
-                    raise ConsolidationError(f"validation failed: {fname} syntax error: {exc}")
+                    raise ConsolidationError(
+                        f"validation failed: {fname} syntax error: {exc}"
+                    )
         # Diff handling
         diff_text = ""
         if diff or check:
             # Compare against existing output if present
-            for fname, new_text in (("_consolidated.py", mod_text), ("__init__.py", init_text)):
+            for fname, new_text in (
+                ("_consolidated.py", mod_text),
+                ("__init__.py", init_text),
+            ):
                 existing = output / fname
                 if existing.is_file():
                     old_text = existing.read_text(encoding="utf-8")
@@ -383,7 +454,9 @@ def consolidate(
                 if check:
                     # --check means verify no changes needed; if diff exists, error
                     if diff_text:
-                        raise ConsolidationError("check failed: output would change (diff not empty)")
+                        raise ConsolidationError(
+                            "check failed: output would change (diff not empty)"
+                        )
             else:
                 if check:
                     logger.success("Check passed: output up to date")
@@ -401,7 +474,11 @@ def consolidate(
                     # For strictness, if output contains unexpected files, we warn.
                     existing_files = list(output.iterdir())
                     if existing_files:
-                        logger.warning("Output directory {} is non-empty ({} files) — overwriting (use --overwrite to silence)", output, len(existing_files))
+                        logger.warning(
+                            "Output directory {} is non-empty ({} files) — overwriting (use --overwrite to silence)",
+                            output,
+                            len(existing_files),
+                        )
                         if not (overwrite or force):
                             # For backward compat, don't fail; but document that --overwrite controls it.
                             # If we want to enforce, uncomment below:
@@ -413,7 +490,11 @@ def consolidate(
                 sys.stdout.write(mod_text)
                 sys.stdout.write("\n--- __init__.py ---\n")
                 sys.stdout.write(init_text)
-                logger.success("{} modules -> stdout ({} exported names)", len(modules), sum(len(v) for v in plan.exports.values()))
+                logger.success(
+                    "{} modules -> stdout ({} exported names)",
+                    len(modules),
+                    sum(len(v) for v in plan.exports.values()),
+                )
                 # Still return result but files empty?
                 exports = sum(len(v) for v in plan.exports.values())
                 return ConsolidationResult(
@@ -431,9 +512,14 @@ def consolidate(
                     plan=plan,
                 )
             output.mkdir(parents=True, exist_ok=True)
-            targets = [(output / "_consolidated.py", mod_text), (output / "__init__.py", init_text)]
+            targets = [
+                (output / "_consolidated.py", mod_text),
+                (output / "__init__.py", init_text),
+            ]
             with ThreadPoolExecutor(max_workers=2) as pool:
-                list(pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets))
+                list(
+                    pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets)
+                )
             # Copy data files
             copied: list[Path] = []
             for df in data_files:
@@ -441,6 +527,7 @@ def consolidate(
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     import shutil
+
                     shutil.copy2(df.path, dest)
                     copied.append(dest)
                     logger.info("Copied data file {} -> {}", df.path, dest)
@@ -451,25 +538,37 @@ def consolidate(
             # Validation
             validated = False
             if validate:
-                for fname, text in (("_consolidated.py", mod_text), ("__init__.py", init_text)):
+                for fname, text in (
+                    ("_consolidated.py", mod_text),
+                    ("__init__.py", init_text),
+                ):
                     try:
                         compile(text, fname, "exec")
                     except SyntaxError as exc:
-                        raise ConsolidationError(f"validate: {fname} failed to compile: {exc}")
+                        raise ConsolidationError(
+                            f"validate: {fname} failed to compile: {exc}"
+                        )
                 if validate_import:
                     # Smoke import: write to temp and try import
                     try:
                         import importlib.util
+
                         # Use _consolidated.py as module
                         mod_path = output / "_consolidated.py"
-                        spec = importlib.util.spec_from_file_location("_consolidated_validate", str(mod_path))
+                        spec = importlib.util.spec_from_file_location(
+                            "_consolidated_validate", str(mod_path)
+                        )
                         if spec and spec.loader:
                             mod = importlib.util.module_from_spec(spec)
                             spec.loader.exec_module(mod)  # type: ignore
-                            logger.success("Validation import succeeded for {}", mod_path)
+                            logger.success(
+                                "Validation import succeeded for {}", mod_path
+                            )
                             validated = True
                         else:
-                            logger.error("Validation: could not create spec for {}", mod_path)
+                            logger.error(
+                                "Validation: could not create spec for {}", mod_path
+                            )
                     except Exception as exc:
                         logger.error("Validation import failed: {}", exc)
                         traceback.print_exc()
@@ -479,28 +578,80 @@ def consolidate(
                     logger.success("Validation compile passed")
             exports = sum(len(v) for v in plan.exports.values())
             # Success log
-            logger.success("{} modules -> {} ({} exported names)", len(modules), output, exports)
-            return ConsolidationResult(output, [p for p, _ in targets], len(modules), skipped, exports, warnings_acc, diff_text, "", copied, validated, False, plan)
+            logger.success(
+                "{} modules -> {} ({} exported names)", len(modules), output, exports
+            )
+            return ConsolidationResult(
+                output,
+                [p for p, _ in targets],
+                len(modules),
+                skipped,
+                exports,
+                warnings_acc,
+                diff_text,
+                "",
+                copied,
+                validated,
+                False,
+                plan,
+            )
         else:
             # Dry-run / check: never write files
-            logger.info("Dry-run: would write {} and {} to {}", "_consolidated.py", "__init__.py", output)
-            for fname, text in (("_consolidated.py", mod_text), ("__init__.py", init_text)):
-                logger.info("Would write {} ({} bytes, {} lines)", fname, len(text.encode("utf-8")), text.count("\n") + 1)
+            logger.info(
+                "Dry-run: would write {} and {} to {}",
+                "_consolidated.py",
+                "__init__.py",
+                output,
+            )
+            for fname, text in (
+                ("_consolidated.py", mod_text),
+                ("__init__.py", init_text),
+            ):
+                logger.info(
+                    "Would write {} ({} bytes, {} lines)",
+                    fname,
+                    len(text.encode("utf-8")),
+                    text.count("\n") + 1,
+                )
             # Show plan summary
-            logger.info("Plan: {} blocks, {} exports, {} deduped, {} renamed", len(plan.blocks), sum(len(v) for v in plan.exports.values()), len(plan.deduped), len(plan.renamed))
+            logger.info(
+                "Plan: {} blocks, {} exports, {} deduped, {} renamed",
+                len(plan.blocks),
+                sum(len(v) for v in plan.exports.values()),
+                len(plan.deduped),
+                len(plan.renamed),
+            )
             # Data files that would be copied
             if data_files:
                 for df in data_files:
-                    logger.info("Would copy data file {} -> {}/{}", df.path, output, df.relative)
+                    logger.info(
+                        "Would copy data file {} -> {}/{}", df.path, output, df.relative
+                    )
             # Validate even in dry-run if requested
             validated = False
             if validate:
-                for fname, text in (("_consolidated.py", mod_text), ("__init__.py", init_text)):
+                for fname, text in (
+                    ("_consolidated.py", mod_text),
+                    ("__init__.py", init_text),
+                ):
                     compile(text, fname, "exec")
                 validated = True
             exports = sum(len(v) for v in plan.exports.values())
             # Return with dry_run flag, no files written
-            return ConsolidationResult(output, [], len(modules), skipped, exports, warnings_acc, diff_text, mod_text + "\n\n" + init_text if stdout else "", [], validated, True, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                exports,
+                warnings_acc,
+                diff_text,
+                mod_text + "\n\n" + init_text if stdout else "",
+                [],
+                validated,
+                True,
+                plan,
+            )
 
     elif mode == "package":
         # Package mode: output/package_name/__init__.py contains consolidated, plus subpackage handling
@@ -508,22 +659,59 @@ def consolidate(
         pkg_dir = output / pkg_name
         mod_text = render_package(plan, source_name, **render_kwargs)
         # In package mode, we emit package_name/__init__.py and package_name/_consolidated.py
-        for fname, text in (("_consolidated.py", mod_text), ("__init__.py", render_init(plan, source_name))):
+        for fname, text in (
+            ("_consolidated.py", mod_text),
+            ("__init__.py", render_init(plan, source_name)),
+        ):
             try:
                 compile(text, fname, "exec")
             except SyntaxError as exc:
-                logger.error("Generated {} is not valid python: {} (line {})", fname, exc.msg, exc.lineno)
+                logger.error(
+                    "Generated {} is not valid python: {} (line {})",
+                    fname,
+                    exc.msg,
+                    exc.lineno,
+                )
         if dry_run or check:
             logger.info("Dry-run package mode: would write to {}", pkg_dir)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", "", [], False, True, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                "",
+                [],
+                False,
+                True,
+                plan,
+            )
         if stdout:
             sys.stdout.write(mod_text)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", mod_text, [], False, False, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                mod_text,
+                [],
+                False,
+                False,
+                plan,
+            )
         # Overwrite check
         if pkg_dir.exists() and any(pkg_dir.iterdir()) and not (overwrite or force):
             logger.warning("Package output {} non-empty — overwriting", pkg_dir)
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        targets = [(pkg_dir / "_consolidated.py", mod_text), (pkg_dir / "__init__.py", render_init(plan, source_name))]
+        targets = [
+            (pkg_dir / "_consolidated.py", mod_text),
+            (pkg_dir / "__init__.py", render_init(plan, source_name)),
+        ]
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets))
         copied = []
@@ -532,12 +720,26 @@ def consolidate(
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 import shutil
+
                 shutil.copy2(df.path, dest)
                 copied.append(dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
         exports = sum(len(v) for v in plan.exports.values())
-        return ConsolidationResult(pkg_dir, [p for p, _ in targets], len(modules), skipped, exports, warnings_acc, "", "", copied, False, False, plan)
+        return ConsolidationResult(
+            pkg_dir,
+            [p for p, _ in targets],
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            "",
+            "",
+            copied,
+            False,
+            False,
+            plan,
+        )
 
     elif mode == "module":
         # Module mode: single file output (no __init__.py)
@@ -545,15 +747,45 @@ def consolidate(
         try:
             compile(mod_text, "_consolidated.py", "exec")
         except SyntaxError as exc:
-            logger.error("Generated _consolidated.py is not valid python: {} (line {})", exc.msg, exc.lineno)
+            logger.error(
+                "Generated _consolidated.py is not valid python: {} (line {})",
+                exc.msg,
+                exc.lineno,
+            )
             if validate:
                 raise ConsolidationError(f"validation failed: {exc}")
         if dry_run or check:
             logger.info("Dry-run module mode: would write single file to {}", output)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", "", [], False, True, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                "",
+                [],
+                False,
+                True,
+                plan,
+            )
         if stdout:
             sys.stdout.write(mod_text)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", mod_text, [], False, False, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                mod_text,
+                [],
+                False,
+                False,
+                plan,
+            )
         # Determine output file: if output is dir, write _consolidated.py inside; if file path, write there
         if output.suffix == ".py":
             out_file = output
@@ -576,27 +808,69 @@ def consolidate(
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 import shutil
+
                 shutil.copy2(df.path, dest)
                 copied.append(dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
         exports = sum(len(v) for v in plan.exports.values())
-        return ConsolidationResult(output, targets, len(modules), skipped, exports, warnings_acc, "", "", copied, False, False, plan)
+        return ConsolidationResult(
+            output,
+            targets,
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            "",
+            "",
+            copied,
+            False,
+            False,
+            plan,
+        )
 
     elif mode == "flat":
         mod_text = render_flat(plan, source_name, **render_kwargs)
         try:
             compile(mod_text, "_consolidated.py", "exec")
         except SyntaxError as exc:
-            logger.error("Generated flat is not valid python: {} (line {})", exc.msg, exc.lineno)
+            logger.error(
+                "Generated flat is not valid python: {} (line {})", exc.msg, exc.lineno
+            )
             if validate:
                 raise ConsolidationError(f"validation failed: {exc}")
         if dry_run or check:
             logger.info("Dry-run flat mode: would write to {}", output)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", "", [], False, True, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                "",
+                [],
+                False,
+                True,
+                plan,
+            )
         if stdout:
             sys.stdout.write(mod_text)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", mod_text, [], False, False, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                mod_text,
+                [],
+                False,
+                False,
+                plan,
+            )
         output.mkdir(parents=True, exist_ok=True)
         if output.exists() and any(output.iterdir()) and not (overwrite or force):
             logger.warning("Output dir {} non-empty — overwriting", output)
@@ -611,12 +885,26 @@ def consolidate(
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 import shutil
+
                 shutil.copy2(df.path, dest)
                 copied.append(dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
         exports = sum(len(v) for v in plan.exports.values())
-        return ConsolidationResult(output, [out_file, output / "__init__.py"], len(modules), skipped, exports, warnings_acc, "", "", copied, False, False, plan)
+        return ConsolidationResult(
+            output,
+            [out_file, output / "__init__.py"],
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            "",
+            "",
+            copied,
+            False,
+            False,
+            plan,
+        )
 
     elif mode == "split":
         split_files = render_split(plan, source_name)
@@ -625,20 +913,55 @@ def consolidate(
             try:
                 compile(text, fname, "exec")
             except SyntaxError as exc:
-                logger.error("Generated {} is not valid python: {} (line {})", fname, exc.msg, exc.lineno)
+                logger.error(
+                    "Generated {} is not valid python: {} (line {})",
+                    fname,
+                    exc.msg,
+                    exc.lineno,
+                )
                 if validate:
                     raise ConsolidationError(f"validation failed: {fname}: {exc}")
         if dry_run or check:
-            logger.info("Dry-run split mode: would write {} files to {}", len(split_files), output)
+            logger.info(
+                "Dry-run split mode: would write {} files to {}",
+                len(split_files),
+                output,
+            )
             for fname in split_files:
                 logger.info("Would write {}", fname)
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", "", [], False, True, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                "",
+                [],
+                False,
+                True,
+                plan,
+            )
         if stdout:
             for fname, text in split_files.items():
                 sys.stdout.write(f"# === {fname} ===\n")
                 sys.stdout.write(text)
                 sys.stdout.write("\n\n")
-            return ConsolidationResult(output, [], len(modules), skipped, sum(len(v) for v in plan.exports.values()), warnings_acc, "", "\n".join(split_files.values()), [], False, False, plan)
+            return ConsolidationResult(
+                output,
+                [],
+                len(modules),
+                skipped,
+                sum(len(v) for v in plan.exports.values()),
+                warnings_acc,
+                "",
+                "\n".join(split_files.values()),
+                [],
+                False,
+                False,
+                plan,
+            )
         output.mkdir(parents=True, exist_ok=True)
         if output.exists() and any(output.iterdir()) and not (overwrite or force):
             logger.warning("Output dir {} non-empty — overwriting", output)
@@ -653,12 +976,26 @@ def consolidate(
             dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 import shutil
+
                 shutil.copy2(df.path, dest)
                 copied.append(dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
         exports = sum(len(v) for v in plan.exports.values())
-        return ConsolidationResult(output, targets, len(modules), skipped, exports, warnings_acc, "", "", copied, False, False, plan)
+        return ConsolidationResult(
+            output,
+            targets,
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            "",
+            "",
+            copied,
+            False,
+            False,
+            plan,
+        )
 
     # Fallback to single
     raise ConsolidationError(f"unhandled mode {mode!r}")

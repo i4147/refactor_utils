@@ -33,9 +33,13 @@ class Plan:
     imports_text: str
     guards: list[str]
     blocks: list[RenderedBlock]
-    exports: dict[str, list[str]] = field(default_factory=lambda: {"constants": [], "classes": [], "functions": []})
+    exports: dict[str, list[str]] = field(
+        default_factory=lambda: {"constants": [], "classes": [], "functions": []}
+    )
     # Extended metadata for reporting / --dry-run
-    renamed: list[tuple[str, str, str]] = field(default_factory=list)  # (module, original, final)
+    renamed: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # (module, original, final)
     deduped: list[tuple[str, str]] = field(default_factory=list)  # (module, name)
     warnings: list[str] = field(default_factory=list)
 
@@ -164,7 +168,9 @@ class Resolver:
     def _is_internal(self, spec: ImportSpec) -> bool:
         if spec.relative:
             return True
-        return bool(spec.module) and (spec.module in self.known or spec.module.split(".")[0] in self.tops)
+        return bool(spec.module) and (
+            spec.module in self.known or spec.module.split(".")[0] in self.tops
+        )
 
     def _canon(self, b: Block) -> Block:
         return self.canon.get(b.bid, b)
@@ -188,7 +194,9 @@ class Resolver:
             return []
         if mi.declared_all is not None:
             return list(mi.declared_all)
-        names = [n for (m, n) in self.def_block if m == module and not n.startswith("_")]
+        names = [
+            n for (m, n) in self.def_block if m == module and not n.startswith("_")
+        ]
         names += [n for n in self.import_table.get(module, {}) if not n.startswith("_")]
         return names
 
@@ -196,7 +204,11 @@ class Resolver:
         internal = self._is_internal(spec)
         if not spec.is_from:
             if internal:
-                return ("mod", spec.module) if spec.alias else ("mod", spec.module.split(".")[0])
+                return (
+                    ("mod", spec.module)
+                    if spec.alias
+                    else ("mod", spec.module.split(".")[0])
+                )
             return ("ext", ("import", spec.module, spec.alias))
         if internal:
             tgt = self._resolve_symbol(spec.module, spec.name, seen)
@@ -205,7 +217,9 @@ class Resolver:
             return tgt
         return ("ext", ("from", spec.module, spec.name, spec.alias))
 
-    def _resolve_symbol(self, module: str, name: str, seen: set | None = None) -> Target | None:
+    def _resolve_symbol(
+        self, module: str, name: str, seen: set | None = None
+    ) -> Target | None:
         blk = self.def_block.get((module, name))
         if blk is not None:
             return ("def", blk, name)
@@ -255,11 +269,15 @@ class Resolver:
                 emit_keys |= {t[1] for t in env.values() if t[0] == "ext"}
         elif self.imports_mode == "strict":
             # In strict, we prune but also warn if unused imports exist
-            all_ext = {t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"}
+            all_ext = {
+                t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"
+            }
             unused = all_ext - used
             if unused:
                 for k in unused:
-                    self._warn_once(f"Strict imports: unused import {k} would be pruned")
+                    self._warn_once(
+                        f"Strict imports: unused import {k} would be pruned"
+                    )
         # keep_unused legacy already mapped
         emit_keys |= self.star_keys
         self._assign_names(kept, emit_keys)
@@ -273,7 +291,9 @@ class Resolver:
             for (mm, n), blk in self.def_block.items():
                 if mm == m:
                     env[n] = ("def", blk, n)
-            specs: list[ImportSpec] = [s for s in mi.imports if s.module != "__future__"]
+            specs: list[ImportSpec] = [
+                s for s in mi.imports if s.module != "__future__"
+            ]
             for b in mi.blocks:
                 for occ in b.occs:
                     if occ.kind == "nested_import":
@@ -286,10 +306,14 @@ class Resolver:
                             if tgt is not None:
                                 env.setdefault(name, tgt)
                         # Warn on local star imports (re-exports)
-                        self._warn_once(f"{m}: local star import from {spec.module} expanded to {len(self._star_names(spec.module))} names")
+                        self._warn_once(
+                            f"{m}: local star import from {spec.module} expanded to {len(self._star_names(spec.module))} names"
+                        )
                     else:
                         # External star imports: log and keep
-                        self._warn_once(f"{m}: external star import from {spec.module} — kept as is")
+                        self._warn_once(
+                            f"{m}: external star import from {spec.module} — kept as is"
+                        )
                         self.star_keys.add(("star", spec.module))
                     continue
                 tgt = self._spec_target(spec, set())
@@ -311,7 +335,9 @@ class Resolver:
                     # Also handle conditional/platform/optional imports: TYPE_CHECKING already filtered in parser,
                     # but try/except ImportError guards are kept verbatim — warn
                     if "ImportError" in g.text or "try:" in g.text:
-                        self._warn_once(f"{m}: conditional/optional import guard kept verbatim (may have side effects)")
+                        self._warn_once(
+                            f"{m}: conditional/optional import guard kept verbatim (may have side effects)"
+                        )
             self.env[m] = env
 
     def _analyse(self) -> None:
@@ -356,7 +382,9 @@ class Resolver:
             # safe: only CLASS/FUNC with identical bodies and no external refs differences
             if self.dedupe_mode == "safe":
                 if b.kind in (CLASS, FUNC) and not self.proj_refs[b.bid]:
-                    groups[(b.kind, b.primary, b.source.strip(), self.ext_refs[b.bid])].append(b)
+                    groups[
+                        (b.kind, b.primary, b.source.strip(), self.ext_refs[b.bid])
+                    ].append(b)
             elif self.dedupe_mode == "aggressive":
                 # Also dedupe CONST and MISC if identical source, and allow whitespace-insensitive matching
                 norm = re.sub(rb"\s+", b" ", b.source.strip())
@@ -389,7 +417,13 @@ class Resolver:
                 if tgt[0] == "ext" and tgt[1] in emit_keys:
                     ext_loc_modules[local].add(m)
         ext_locals = {_ext_local(k) for k in emit_keys if _ext_local(k)}
-        guard_names = {s.local_name for mi in self.modules.values() for g in mi.guards for s in g.specs if s.local_name}
+        guard_names = {
+            s.local_name
+            for mi in self.modules.values()
+            for g in mi.guards
+            for s in g.specs
+            if s.local_name
+        }
         group: dict[str, list[Block]] = defaultdict(list)
         for b in kept:
             for n in b.names:
@@ -402,12 +436,17 @@ class Resolver:
 
         # Detect collisions between external and local names
         for name in sorted(group):
-            blocks = sorted(group[name], key=lambda x: (x.module.count("."), x.module, x.order))
+            blocks = sorted(
+                group[name], key=lambda x: (x.module.count("."), x.module, x.order)
+            )
             # If this is 'main' and we have an override, we want final name to be main_name (not original)
             # But still need collision handling for multiple mains
-            is_main_override = (name == "main" and main_override is not None)
+            is_main_override = name == "main" and main_override is not None
             for i, b in enumerate(blocks):
-                clash = bool(ext_loc_modules.get(name, set()) - {b.module}) or name in guard_names
+                clash = (
+                    bool(ext_loc_modules.get(name, set()) - {b.module})
+                    or name in guard_names
+                )
                 # For main override, we always want to map to main_name (or with prefix if collision)
                 if is_main_override:
                     if i == 0 and not clash and main_override not in taken:
@@ -415,11 +454,20 @@ class Resolver:
                     else:
                         # Multiple mains with override: need disambiguation
                         base_name = main_override
-                        cand = f"{base_name}_{self._prefix(b.module)}" if i != 0 else base_name
+                        cand = (
+                            f"{base_name}_{self._prefix(b.module)}"
+                            if i != 0
+                            else base_name
+                        )
                         base, n = cand, 2
                         while cand in taken or cand in group:
                             cand, n = f"{base}_{n}", n + 1
-                        logger.info("Renaming {} 'main' in {} -> '{}' (main-name override)", b.kind, b.module, cand)
+                        logger.info(
+                            "Renaming {} 'main' in {} -> '{}' (main-name override)",
+                            b.kind,
+                            b.module,
+                            cand,
+                        )
                         if i == 0:
                             logger.info("Renaming main -> {} (via --main-name)", cand)
                     taken.add(cand)
@@ -450,7 +498,14 @@ class Resolver:
                     base, n = cand, 2
                     while cand in taken or cand in group:
                         cand, n = f"{base}_{n}", n + 1
-                    logger.info("Renaming {} '{}' in {} -> '{}' (strategy={})", b.kind, name, b.module, cand, self.rename_strategy)
+                    logger.info(
+                        "Renaming {} '{}' in {} -> '{}' (strategy={})",
+                        b.kind,
+                        name,
+                        b.module,
+                        cand,
+                        self.rename_strategy,
+                    )
                 taken.add(cand)
                 self.final[(b.bid, name)] = cand
                 if cand != name:
@@ -484,7 +539,9 @@ class Resolver:
                 taken.add(cand)
                 aliased[ident] = cand
                 self.ext_final[k] = cand
-                logger.info("Import conflict on '{}': aliasing {} as '{}'", loc, k[1:], cand)
+                logger.info(
+                    "Import conflict on '{}': aliasing {} as '{}'", loc, k[1:], cand
+                )
 
     def _target_name(self, tgt: Target | None, local: str | None) -> str | None:
         if tgt is None:
@@ -503,15 +560,27 @@ class Resolver:
             if occ.kind == "nested_import":
                 internal = [s for s in occ.specs if self._is_internal(s)]
                 if internal:
-                    lines = [render_import_line(s) for s in occ.specs if not self._is_internal(s)]
-                    edits.append((occ.start, occ.end, ("\n" + occ.obj).join(lines) if lines else "pass"))
+                    lines = [
+                        render_import_line(s)
+                        for s in occ.specs
+                        if not self._is_internal(s)
+                    ]
+                    edits.append(
+                        (
+                            occ.start,
+                            occ.end,
+                            ("\n" + occ.obj).join(lines) if lines else "pass",
+                        )
+                    )
                 continue
             if occ.kind == "name":
                 new = self._target_name(env.get(occ.name), occ.name)
                 if new is None or new == occ.name:
                     continue
             else:
-                new = self._target_name(self._resolve_dotted(b.module, occ.obj, occ.name), None)
+                new = self._target_name(
+                    self._resolve_dotted(b.module, occ.obj, occ.name), None
+                )
                 if new is None:
                     continue
             edits.append((occ.start, occ.end, new))
@@ -535,43 +604,75 @@ class Resolver:
             texts = [self._render_block(b) for b in kept]
         return {b.bid: t for b, t in zip(kept, texts)}
 
-    def _assemble(self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]) -> Plan:
+    def _assemble(
+        self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]
+    ) -> Plan:
         keyfn = lambda b: (self.mod_idx[b.module], b.order)  # noqa: E731
         body = [b for b in kept if b.kind != MAIN]
         mains = sorted((b for b in kept if b.kind == MAIN), key=keyfn)
-        deps: dict[int, set[int]] = {b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid} for b in body}
+        deps: dict[int, set[int]] = {
+            b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid}
+            for b in body
+        }
         dependents: dict[int, set[int]] = defaultdict(set)
         for bid, ds in deps.items():
             for d in ds:
                 dependents[d].add(bid)
-        tail = [b for b in body if b.kind == FUNC and b.primary == "main" and not dependents[b.bid]]
+        tail = [
+            b
+            for b in body
+            if b.kind == FUNC and b.primary == "main" and not dependents[b.bid]
+        ]
         tail_ids = {b.bid for b in tail}
         head = [b for b in body if b.bid not in tail_ids]
-        ordered = topo_order(head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b)))
+        ordered = topo_order(
+            head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b))
+        )
         tail_ordered = topo_order(tail, deps, lambda b: 0, keyfn)
         rendered: list[RenderedBlock] = []
         for b in ordered:
             txt = texts[b.bid]
             # Preserve-modules / source_map prefixes are added in writer; but we can embed origin here
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
-            rendered.append(RenderedBlock(_SECTION[b.kind], b.kind, txt, origin=origin, module=b.module))
+            rendered.append(
+                RenderedBlock(
+                    _SECTION[b.kind], b.kind, txt, origin=origin, module=b.module
+                )
+            )
         for b in tail_ordered + mains:
             txt = texts[b.bid]
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
-            rendered.append(RenderedBlock("entry", b.kind, txt, origin=origin, module=b.module))
+            rendered.append(
+                RenderedBlock("entry", b.kind, txt, origin=origin, module=b.module)
+            )
         # Handle generate_guard: if requested and no mains, create one calling main()
         if self.generate_guard and not mains:
             # Find main functions
-            mains_funcs = [b for b in kept if b.kind == FUNC and b.primary in ("main", self.main_name or "main")]
+            mains_funcs = [
+                b
+                for b in kept
+                if b.kind == FUNC and b.primary in ("main", self.main_name or "main")
+            ]
             if mains_funcs:
-                guard_text = 'if __name__ == "__main__":\n    main()' if not self.main_name else f'if __name__ == "__main__":\n    {self.main_name}()'
-                rendered.append(RenderedBlock("entry", MAIN, guard_text, origin="generated", module="__main__"))
+                guard_text = (
+                    'if __name__ == "__main__":\n    main()'
+                    if not self.main_name
+                    else f'if __name__ == "__main__":\n    {self.main_name}()'
+                )
+                rendered.append(
+                    RenderedBlock(
+                        "entry", MAIN, guard_text, origin="generated", module="__main__"
+                    )
+                )
                 logger.info("Auto-generated __main__ guard")
         if len(mains) > 1:
             if self.entry_keep_all:
                 logger.info("{} '__main__' guards kept (--entry-keep-all)", len(mains))
             else:
-                logger.warning("{} '__main__' guards were kept; use --entry to keep only one", len(mains))
+                logger.warning(
+                    "{} '__main__' guards were kept; use --entry to keep only one",
+                    len(mains),
+                )
         guards: list[str] = []
         for mi in self.modules.values():
             for g in mi.guards:
@@ -596,7 +697,9 @@ class Resolver:
             if mi.declared_all:
                 declared_all_union.update(mi.declared_all)
 
-        if self.all_mode == "respect" or (self.respect_all and self.all_mode == "ignore" and declared_all_union):
+        if self.all_mode == "respect" or (
+            self.respect_all and self.all_mode == "ignore" and declared_all_union
+        ):
             # respect: only those in declared_all
             allowed = set()
             for m, mi in self.modules.items():
@@ -611,12 +714,18 @@ class Resolver:
                         allowed.add(n)
                     else:
                         # Computed __all__ member missing — warn
-                        self._warn_once(f"__all__ member '{n}' in {m} cannot be resolved — skipped")
+                        self._warn_once(
+                            f"__all__ member '{n}' in {m} cannot be resolved — skipped"
+                        )
             if not allowed and declared_all_union:
-                logger.warning("No __all__ members could be resolved; exports will be empty")
+                logger.warning(
+                    "No __all__ members could be resolved; exports will be empty"
+                )
         elif self.all_mode == "merge":
             # merge: union of declared_all plus all public names
-            allowed = None  # we will include all public, but ensure declared_all are included
+            allowed = (
+                None  # we will include all public, but ensure declared_all are included
+            )
             # We'll compute normal exports then add any declared_all that were missed
         elif self.all_mode == "recompute":
             # recompute: all public names sorted, ignoring original declarations
@@ -654,7 +763,9 @@ class Resolver:
                                 seen.add(fin)
                                 # Determine group by finding block kind
                                 blk = tgt[1]
-                                plan.exports[groups.get(blk.kind, "constants")].append(fin)
+                                plan.exports[groups.get(blk.kind, "constants")].append(
+                                    fin
+                                )
                         elif tgt and tgt[0] == "ext":
                             if n not in seen:
                                 seen.add(n)
@@ -664,4 +775,6 @@ class Resolver:
         # Handle renaming of main for exports (if main is exported, use new name)
         if self.main_name:
             for k in plan.exports:
-                plan.exports[k] = [self.main_name if n == "main" else n for n in plan.exports[k]]
+                plan.exports[k] = [
+                    self.main_name if n == "main" else n for n in plan.exports[k]
+                ]

@@ -11,6 +11,7 @@ import textwrap
 from pathlib import Path
 from refactor_utils.core import consolidate
 
+
 def demo_dry_run():
     print("=== Dry-run (no files written) ===")
     with tempfile.TemporaryDirectory() as tmp:
@@ -19,8 +20,11 @@ def demo_dry_run():
         (pkg / "a.py").write_text("X=1\n")
         out = Path(tmp) / "out"
         result = consolidate(pkg, out, dry_run=True)
-        print(f"dry_run={result.dry_run}, would write {len(result.plan.blocks) if result.plan else 0} blocks")
+        print(
+            f"dry_run={result.dry_run}, would write {len(result.plan.blocks) if result.plan else 0} blocks"
+        )
         print(f"out exists? {out.exists()}")
+
 
 def demo_validate():
     print("\n=== Validate (compile + import) ===")
@@ -31,6 +35,7 @@ def demo_validate():
         out = Path(tmp) / "out"
         result = consolidate(pkg, out, validate=True, validate_import=True)
         print(f"validated={result.validated}, exports={result.exports}")
+
 
 def demo_diff():
     print("\n=== Diff against existing output ===")
@@ -46,6 +51,7 @@ def demo_diff():
         print(f"diff length={len(result.diff)}")
         print(result.diff[:300] if result.diff else "(no diff)")
 
+
 def demo_data_files():
     print("\n=== Data files preservation ===")
     with tempfile.TemporaryDirectory() as tmp:
@@ -58,6 +64,7 @@ def demo_data_files():
         result = consolidate(pkg, out, copy_data=True, data_glob=("*.json",))
         print(f"copied={result.copied_data_files}")
         print("files on disk:", list(out.rglob("*.json")))
+
 
 if __name__ == "__main__":
     demo_dry_run()
