@@ -8,8 +8,37 @@ version = "1.4.8"
 description = "Consolidate a small/medium Python module, library or project into a single, dependency-ordered file."
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+    "loguru",
+    "tree-sitter",
+    "tree_sitter_python",
+]
+# optional dependencies for --format and --progress
+# pip install refactor_utils[format] or [progress] if defined as extras (not yet)
 [project.scripts]
 pyrefactor = "refactor_utils.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+refactor_utils = ["data/*", "data/**/*"]
+
+[tool.pyrefactor]
+# Example config — can be overridden per-project; this is for refactor_utils itself
+exclude = ["tests/*", "test_*.py", "iwgfyrkugf.py"]
+include = []
+entry = []
+rename_strategy = "prefix"
+dedupe = "safe"
+imports = "prune"
+all = "ignore"
+format = false
+fail_on_warning = false
+max_skipped = 10
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88

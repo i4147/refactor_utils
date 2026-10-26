@@ -48,6 +48,11 @@ class Block:
     occs: list[Occ]
     order: int
     bid: int = -1
+    # extended fields for source-map / preserve-modules (picklable)
+    orig_path: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    stripped_docstring: bool = False
 
     @property
     def primary(self) -> str:
@@ -90,3 +95,34 @@ class SourceFile:
     path: "object"
     module: str
     is_pkg: bool
+
+
+@dataclass(frozen=True)
+class DataFile:
+    """Non-Python data file discovered alongside the source tree."""
+    path: "object"
+    relative: str  # relative to source base, for output placement
+    kind: str = "data"
+
+
+@dataclass
+class ConsolidationOptions:
+    """Picklable bundle of user options that affect parser/resolver/writer.
+
+    Kept in models.py so workers can receive it if needed; but currently
+    most flags are handled in the main process (resolver/writer).
+    """
+    keep_docstrings: bool = True
+    strip_comments: bool = False
+    keep_comments: bool = True
+    allow_syntax_errors: bool = False
+    rename_strategy: str = "prefix"  # prefix|suffix|module_path|error
+    dedupe: str = "safe"  # none|safe|aggressive
+    imports_mode: str = "prune"  # prune|keep|strict
+    all_mode: str = "ignore"  # ignore|respect|merge|recompute
+    namespace: bool = False
+    preserve_modules: bool = False
+    source_map: bool = False
+    entry_keep_all: bool = False
+    main_name: str | None = None
+    generate_guard: bool = False
