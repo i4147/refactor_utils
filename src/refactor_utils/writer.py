@@ -6,6 +6,7 @@ the generated ``__init__.py`` that re-exports the public API.
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Any
 from .imports import future_section
 from .resolver import Plan
 
@@ -183,7 +184,7 @@ def render_init(plan: Plan, source_name: str, module: str = "_consolidated") -> 
     return "\n".join(out)
 
 
-def render_flat(plan: Plan, source_name: str, **kwargs) -> str:
+def render_flat(plan: Plan, source_name: str, **kwargs: Any) -> str:
     """Render blocks without section headers.
 
     Args:
@@ -200,6 +201,8 @@ def render_flat(plan: Plan, source_name: str, **kwargs) -> str:
         parts.append(future_section(plan.future_names))
     if plan.imports_text:
         parts.append(plan.imports_text)
+    if plan.guards:
+        parts.append("\n\n".join(plan.guards))
     for blk in plan.blocks:
         hdr = ""
         if kwargs.get("preserve_modules") and blk.module:
@@ -249,7 +252,7 @@ def render_split(plan: Plan, source_name: str) -> dict[str, str]:
     return out
 
 
-def render_package(plan: Plan, source_name: str, **kwargs) -> str:
+def render_package(plan: Plan, source_name: str, **kwargs: Any) -> str:
     """Render the consolidated module for package mode.
 
     Args:
@@ -265,7 +268,7 @@ def render_package(plan: Plan, source_name: str, **kwargs) -> str:
     return render_consolidated(plan, source_name, **kwargs)
 
 
-def render_module(plan: Plan, source_name: str, **kwargs) -> str:
+def render_module(plan: Plan, source_name: str, **kwargs: Any) -> str:
     """Render a single module file without a generated ``__init__.py``.
 
     Args:

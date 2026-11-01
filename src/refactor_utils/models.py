@@ -19,6 +19,38 @@ MISC = "misc"
 MAIN = "main"
 
 
+def ident_sort_key(name: str) -> tuple[str, str]:
+    """Build a deterministic sort key where ``_`` precedes letters and digits.
+
+    ASCII places ``A``–``Z`` (65–90) and ``0``–``9`` (48–57) before ``_`` (95),
+    so plain string sorting puts ``Alpha`` before ``_Alpha`` and ``_1`` before
+    ``__a``. Mapping ``_`` to ``\\x00`` orders leading and embedded underscores
+    before alphanumeric characters while keeping comparisons case-insensitive
+    with a deterministic case tie-breaker.
+
+    Args:
+        name: Identifier or filename to key.
+
+    Returns:
+        A ``(casefolded, exact)`` tuple suitable for ``sorted(..., key=...)``.
+
+    """
+    return (name.lower().replace("_", "\x00"), name.replace("_", "\x00"))
+
+
+def dotted_sort_key(dotted: str) -> tuple[tuple[str, str], ...]:
+    """Build a segment-wise sort key for dotted module names.
+
+    Args:
+        dotted: Dotted module path (for example ``"pkg._internal"``).
+
+    Returns:
+        Tuple of :func:`ident_sort_key` keys, one per segment.
+
+    """
+    return tuple(ident_sort_key(part) for part in dotted.split("."))
+
+
 @dataclass(frozen=True)
 class ImportSpec:
     """A single import as written in the source.
@@ -31,6 +63,7 @@ class ImportSpec:
         is_from: Whether the statement was a ``from ... import ...``.
         star: Whether the statement was a star import.
         relative: Whether the statement used a relative (``.``) module.
+        type_checking: Whether the import appeared inside ``if TYPE_CHECKING:``.
 
     """
 
@@ -40,6 +73,7 @@ class ImportSpec:
     is_from: bool = False
     star: bool = False
     relative: bool = False
+    type_checking: bool = False
 
     @property
     def local_name(self) -> str | None:
@@ -99,6 +133,10 @@ class Block:
         start_line: First source line of the block.
         end_line: Last source line of the block.
         stripped_docstring: Whether docstrings were stripped from the source.
+        name_kinds: Optional per-name kind override (``const``/``class``/``func``)
+            for compound blocks that bind names of multiple kinds.
+        binds_value: Whether the block actually binds runtime values for its
+            ``names`` (``False`` for bare annotations like ``X: int``).
 
     """
 
@@ -114,6 +152,8 @@ class Block:
     start_line: int = 0
     end_line: int = 0
     stripped_docstring: bool = False
+    name_kinds: dict[str, str] = field(default_factory=dict)
+    binds_value: bool = True
 
     @property
     def primary(self) -> str:
@@ -129,9 +169,9 @@ class Block:
         """Append ``other`` to this block, shifting its byte offsets accordingly.
 
         Used when a module defines the same top-level name more than once
-        (e.g. an ``@overload`` group followed by its implementation, or a
-        constant that is reassigned): both fragments are kept together so the
-        group is renamed and emitted atomically.
+        (e.g. an ``@overload`` group followed by its implementation, or an
+        adjacent constant declaration/reassignment): both fragments are kept
+        together so the group is renamed and emitted atomically.
 
         Args:
             other: The block to append. Mutated in place (its occurrence
@@ -147,6 +187,9 @@ class Block:
         for name in other.names:
             if name not in self.names:
                 self.names.append(name)
+        for name, kind in other.name_kinds.items():
+            self.name_kinds.setdefault(name, kind)
+        self.binds_value = self.binds_value or other.binds_value
 
 
 @dataclass
@@ -180,6 +223,8 @@ class ModuleInfo:
         is_pkg: Whether the file is a package ``__init__.py``.
         imports: Module-level import specifications.
         blocks: Top-level, renameable/orderable source blocks.
+        tc_blocks: Non-import declarations extracted from ``if TYPE_CHECKING:``
+            suites, to be merged into a single ``if TYPE_CHECKING:`` guard.
         guards: Import guards kept verbatim (``try/except ImportError``).
         declared_all: Literal contents of ``__all__``, or ``None`` when the
             module does not declare one. An explicit empty list is preserved.
@@ -197,8 +242,10 @@ class ModuleInfo:
     is_pkg: bool
     imports: list[ImportSpec] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
+    tc_blocks: list[Block] = field(default_factory=list)
     guards: list[GuardBlock] = field(default_factory=list)
     declared_all: list[str] | None = None
+    deleted_names: set[str] = field(default_factory=set)
     future_annotations: bool = False
     future_names: list[str] = field(default_factory=list)
     encoding: str = "utf-8"
