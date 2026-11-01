@@ -4,7 +4,6 @@ These reproduce the inline python tests we executed before creating tests/test_*
 They can be run as: python tools/arena/test_helpers.py
 """
 
-from __future__ import annotations
 import textwrap
 import tempfile
 from pathlib import Path

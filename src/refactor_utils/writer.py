@@ -4,7 +4,6 @@ Holds the layout-specific renderers (single, package, module, flat, split) plus
 the generated ``__init__.py`` that re-exports the public API.
 """
 
-from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from .imports import future_section

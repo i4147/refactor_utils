@@ -1,6 +1,5 @@
 """Plain, picklable data structures shared by the parser and the resolver."""
 
-from __future__ import annotations
 from dataclasses import dataclass, field
 
 

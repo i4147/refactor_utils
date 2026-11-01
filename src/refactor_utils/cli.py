@@ -5,7 +5,6 @@ defaults and behaviour live in :mod:`refactor_utils.core` so the library API and
 the CLI can never drift apart.
 """
 
-from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path

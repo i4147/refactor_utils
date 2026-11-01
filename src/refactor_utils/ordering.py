@@ -1,6 +1,5 @@
 """Dependency-aware ordering of blocks."""
 
-from __future__ import annotations
 import heapq
 from collections import defaultdict
 from typing import Callable, Mapping, Sequence

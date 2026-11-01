@@ -1,6 +1,5 @@
 """Cross-module resolution: name collisions, import rewriting, dedupe, ordering."""
 
-from __future__ import annotations
 import re
 import textwrap
 from collections import defaultdict

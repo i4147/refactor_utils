@@ -6,7 +6,6 @@ throughout the arena session.
 Reuse: `from tools.arena.helpers import create_sample_project, verify_data_copy`
 """
 
-from __future__ import annotations
 import filecmp
 import textwrap
 import shutil

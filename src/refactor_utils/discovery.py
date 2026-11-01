@@ -1,6 +1,5 @@
 """Find the python files of a project and derive their dotted module names."""
 
-from __future__ import annotations
 import fnmatch
 import os
 from pathlib import Path
