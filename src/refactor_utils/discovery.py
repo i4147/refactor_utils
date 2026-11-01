@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Iterable
 from loguru import logger
-from .models import DataFile, SourceFile
+from .models import DataFile, SourceFile, ident_sort_key
 
 EXCLUDED_DIRS = {
     ".git",
@@ -175,7 +175,7 @@ def _walk(
     follow_symlinks: bool = False,
 ) -> Iterable[Path]:
     try:
-        entries = sorted(directory.iterdir(), key=lambda p: p.name)
+        entries = sorted(directory.iterdir(), key=lambda p: ident_sort_key(p.name))
     except OSError as exc:
         logger.error("Cannot list {}: {}", directory, exc)
         return
@@ -359,7 +359,7 @@ def discover_data_files(
             continue
         visited.add(cur.resolve())
         try:
-            entries = sorted(cur.iterdir(), key=lambda p: p.name)
+            entries = sorted(cur.iterdir(), key=lambda p: ident_sort_key(p.name))
         except OSError as exc:
             logger.error("Cannot list {}: {}", cur, exc)
             continue

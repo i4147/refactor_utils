@@ -5,7 +5,7 @@ import heapq
 from collections import defaultdict
 from typing import Callable, Mapping, Sequence
 from loguru import logger
-from .models import Block, ResolverError
+from .models import Block, ResolverError, ident_sort_key
 
 
 def topo_order(
@@ -68,7 +68,10 @@ def topo_order(
                 key=lambda i: (len(pending[i]), rank(by_id[i]), key(by_id[i])),
             )
             blocked = ", ".join(
-                sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand])
+                sorted(
+                    (by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand]),
+                    key=ident_sort_key,
+                )
             )
             message = (
                 f"Circular import-time dependency: emitting "
