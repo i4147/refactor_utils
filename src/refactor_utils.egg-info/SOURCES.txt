@@ -26,6 +26,7 @@ tests/test_core.py
 tests/test_data_files.py
 tests/test_discovery.py
 tests/test_edge_cases.py
+tests/test_five_issues.py
 tests/test_integration.py
 tests/test_ordering_and_imports.py
 tests/test_parser.py

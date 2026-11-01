@@ -83,7 +83,7 @@ def test_all_chained_and_tuple_unpacking_strip_all_keep_siblings(
         "all_chained",
         {
             "__init__.py": "",
-            "a.py": ('EXPORTED = __all__ = ["FOO", "EXPORTED"]\n' "FOO = 1\n"),
+            "a.py": ('EXPORTED = __all__ = ["FOO", "EXPORTED"]\nFOO = 1\n'),
             "b.py": (
                 '__all__ = NAMES = ["BAR", "NAMES", "EXTRA"]\n'
                 '__all__, EXTRA = ["BAR", "NAMES", "EXTRA"], 99\n'
@@ -158,9 +158,7 @@ def test_all_mutations_del_and_internal_import_never_emitted(
                 "ONE = 1\n"
                 "DROP_ME = -1\n"
             ),
-            "b.py": (
-                '__all__ = ["TEMP"]\n' "TMP = 1\n" "del TMP, __all__\n" "PUBLIC_B = 5\n"
-            ),
+            "b.py": ('__all__ = ["TEMP"]\nTMP = 1\ndel TMP, __all__\nPUBLIC_B = 5\n'),
         },
         all_mode="merge",
     )
@@ -421,9 +419,7 @@ def test_private_symbols_excluded_from_init(tmp_path: Path) -> None:
         "priv_pkg",
         {
             "__init__.py": (
-                "import os\n"
-                "from typing import TYPE_CHECKING\n"
-                '__version__ = "2.1.0"\n'
+                'import os\nfrom typing import TYPE_CHECKING\n__version__ = "2.1.0"\n'
             ),
             "a.py": (
                 "_SECRET_CONST = 42\n"
@@ -686,7 +682,7 @@ def test_intra_module_reassigned_constant_preserves_intermediate_readers(
                 "def from_a() -> tuple[int, int, int]:\n"
                 "    return (EARLY_SNAPSHOT, LATE_SNAPSHOT, LEVEL)\n"
             ),
-            "b.py": ("LEVEL = 50\n" "def from_b() -> int:\n" "    return LEVEL\n"),
+            "b.py": ("LEVEL = 50\ndef from_b() -> int:\n    return LEVEL\n"),
         },
     )
     assert mod.LEVEL == 50
@@ -698,10 +694,7 @@ def test_flat_mode_preserves_merged_type_checking_guard(tmp_path: Path) -> None:
     """Flat layout also renders guards like the merged ``if TYPE_CHECKING:`` block."""
     p = tmp_path / "m.py"
     p.write_text(
-        "from typing import TYPE_CHECKING\n"
-        "if TYPE_CHECKING:\n"
-        "    import json\n"
-        "X = 1\n",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import json\nX = 1\n",
         encoding="utf-8",
     )
     plan = Resolver({"m": parse_module_file(str(p), "m", False)}).build()

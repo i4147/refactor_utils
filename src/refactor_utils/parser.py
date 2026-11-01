@@ -1842,8 +1842,6 @@ def parse_module_file(
         if strip_comments or not keep_comments:
             for b in info.blocks + info.tc_blocks:
                 b.source = _strip_comments_from_source(b.source)
-    except (
-        Exception
-    ) as exc:  # noqa: BLE001 - reported to the caller, never crashes a worker
+    except Exception as exc:  # noqa: BLE001 - reported to the caller, never crashes a worker
         info.errors.append(f"{path_str}: extraction failed: {exc!r}")
     return info

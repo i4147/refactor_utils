@@ -4,7 +4,6 @@ Each test targets one of the correctness bugs, silent semantic changes,
 parser gaps or IO problems that were fixed after the initial release.
 """
 
-
 import textwrap
 from pathlib import Path
 
