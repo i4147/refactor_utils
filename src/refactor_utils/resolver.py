@@ -1302,7 +1302,7 @@ class Resolver:
         name = self.final.get((block.bid, wanted)) or wanted
         if _ASYNC_DEF_RE.match(block.source.strip()):
             emit_keys.add(("import", "asyncio", None))
-            return 'if __name__ == "__main__":\n' f"    asyncio.run({name}())"
+            return f'if __name__ == "__main__":\n    asyncio.run({name}())'
         return f'if __name__ == "__main__":\n    {name}()'
 
     def _exports(self, plan: Plan, kept: list[Block]) -> None:
