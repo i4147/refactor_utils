@@ -7,6 +7,7 @@ import warnings
 from collections.abc import Iterable
 from pathlib import Path
 from types import ModuleType
+
 __version__ = "0.2.0"
 __all__ = [
     "__version__",
@@ -21,6 +22,8 @@ _MARKER_START = "# --- auto-generated __all__ (delete to regenerate) ---"
 _MARKER_END = "# --- end auto-generated __all__ ---"
 _INSTALL_MARKER = "# --- autoall: ensure __all__ ---"
 _INSTALL_END_MARKER = "# --- end autoall ---"
+
+
 def _install_block(include_submodules: bool = False, include_dunders: bool = False) -> str:
     flags = ""
     if include_submodules:
@@ -34,12 +37,16 @@ def _install_block(include_submodules: bool = False, include_dunders: bool = Fal
         f"_ensure_all(__package__ or __name__{flags})\n"
         f"{_INSTALL_END_MARKER}\n"
     )
+
+
 def _init_path(pkg: ModuleType) -> Path | None:
     f = getattr(pkg, "__file__", None)
     if not f:
         return None
     p = Path(f)
     return p if p.name == "__init__.py" else None
+
+
 def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".autoall.tmp")
     try:
@@ -50,16 +57,22 @@ def _atomic_write(path: Path, text: str) -> None:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
 def _strip_between(src: str, start: str, end: str) -> str:
     if start not in src:
         return src
     before, rest = src.split(start, 1)
     after = rest.split(end, 1)[1] if end in rest else ""
     return (before.rstrip() + "\n" + after.lstrip("\n")).rstrip() + "\n"
+
+
 def _extract_between(src: str, start: str, end: str) -> str | None:
     if start not in src or end not in src.split(start, 1)[1]:
         return None
     return src.split(start, 1)[1].split(end, 1)[0]
+
+
 def _parse_all_literal(src: str) -> list[str] | None:
     try:
         tree = ast.parse(src)
@@ -80,6 +93,8 @@ def _parse_all_literal(src: str) -> list[str] | None:
                     return None
                 return [str(x) for x in val] if isinstance(val, (list, tuple)) else None
     return None
+
+
 def _has_all_binding(tree: ast.Module) -> bool:
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -95,20 +110,28 @@ def _has_all_binding(tree: ast.Module) -> bool:
                 if isinstance(node, ast.ImportFrom) and a.name == "__all__" and a.asname is None:
                     return True
     return False
+
+
 def _public(name: str, include_dunders: bool) -> bool:
     if not name.isidentifier():
         return False
     if name.startswith("__") and name.endswith("__"):
         return include_dunders
     return not name.startswith("_")
+
+
 def _is_own_module(name: str, root: str) -> bool:
     return name == root or name.startswith(root + ".")
+
+
 def _relative_target(pkg: ModuleType, node: ast.ImportFrom) -> str:
     base = pkg.__name__.split(".")
     if node.level > 1:
         base = base[: len(base) - (node.level - 1)]
     parts = base + ([node.module] if node.module else [])
     return ".".join(parts)
+
+
 def _star_names(pkg: ModuleType, node: ast.ImportFrom) -> list[str]:
     root = pkg.__name__.split(".")[0]
     modname = _relative_target(pkg, node)
@@ -128,6 +151,8 @@ def _star_names(pkg: ModuleType, node: ast.ImportFrom) -> list[str]:
         if getattr(value, "__module__", None) == modname:
             out.append(name)
     return out
+
+
 def _collect_names(
     pkg: ModuleType,
     tree: ast.Module,
@@ -138,6 +163,7 @@ def _collect_names(
     root = pkg.__name__.split(".")[0]
     names: list[str] = []
     seen: set[str] = set()
+
     def add(name: str) -> None:
         if name in seen or not _public(name, include_dunders):
             return
@@ -145,6 +171,7 @@ def _collect_names(
             return
         seen.add(name)
         names.append(name)
+
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             add(node.name)
@@ -174,11 +201,15 @@ def _collect_names(
                 if alias.asname and _is_own_module(alias.name, root):
                     add(alias.asname)
     return sorted(names)
+
+
 def _build_block(names: Iterable[str]) -> str:
     lines = ["", _MARKER_START, "__all__ = ["]
     lines.extend(f"    {n!r}," for n in names)
     lines.extend(["]", _MARKER_END, ""])
     return "\n".join(lines)
+
+
 def _resolve_path(target: str | Path) -> Path:
     p = Path(target)
     if p.is_dir():
@@ -195,6 +226,8 @@ def _resolve_path(target: str | Path) -> Path:
     if init is None:
         raise FileNotFoundError(f"{target!r} is not a file-based package")
     return init
+
+
 def ensure_all(
     pkg_name: str,
     *,
@@ -252,6 +285,8 @@ def ensure_all(
         except OSError as exc:
             warnings.warn(f"autoall: cannot persist to {init_py}: {exc}", stacklevel=2)
     return names
+
+
 def install(
     target: str | Path,
     *,
@@ -262,8 +297,12 @@ def install(
     src = init_py.read_text(encoding="utf-8")
     if _INSTALL_MARKER in src:
         return init_py
-    _atomic_write(init_py, src.rstrip() + "\n" + _install_block(include_submodules, include_dunders))
+    _atomic_write(
+        init_py, src.rstrip() + "\n" + _install_block(include_submodules, include_dunders)
+    )
     return init_py
+
+
 def uninstall(target: str | Path) -> Path:
     init_py = _resolve_path(target)
     src = init_py.read_text(encoding="utf-8")
@@ -275,12 +314,16 @@ def uninstall(target: str | Path) -> Path:
     if new_src != src:
         _atomic_write(init_py, new_src)
     return init_py
+
+
 def is_installed(target: str | Path) -> bool:
     try:
         init_py = _resolve_path(target)
     except FileNotFoundError:
         return False
     return _INSTALL_MARKER in init_py.read_text(encoding="utf-8")
+
+
 def regenerate(
     pkg_name: str,
     *,
@@ -299,6 +342,8 @@ def regenerate(
         include_submodules=include_submodules,
         include_dunders=include_dunders,
     )
+
+
 def _cli_install(args: argparse.Namespace) -> int:
     for t in args.targets:
         try:
@@ -308,6 +353,8 @@ def _cli_install(args: argparse.Namespace) -> int:
         except FileNotFoundError as exc:
             print(f"skipped:   {exc}", file=sys.stderr)
     return 0
+
+
 def _cli_uninstall(args: argparse.Namespace) -> int:
     for t in args.targets:
         try:
@@ -315,12 +362,16 @@ def _cli_uninstall(args: argparse.Namespace) -> int:
         except FileNotFoundError as exc:
             print(f"skipped:   {exc}", file=sys.stderr)
     return 0
+
+
 def _cli_regen(args: argparse.Namespace) -> int:
     for n in args.names:
         print(
             f"{n}: {regenerate(n, include_submodules=args.submodules, include_dunders=args.dunders)}"
         )
     return 0
+
+
 def _cli_status(args: argparse.Namespace) -> int:
     rc = 0
     for t in args.targets:
@@ -336,6 +387,8 @@ def _cli_status(args: argparse.Namespace) -> int:
             print(f"missing       {exc}", file=sys.stderr)
             rc = 1
     return rc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="autoall",
@@ -366,5 +419,7 @@ def main(argv: list[str] | None = None) -> int:
     p_regen.set_defaults(func=_cli_regen)
     args = parser.parse_args(argv)
     return args.func(args) or 0
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
