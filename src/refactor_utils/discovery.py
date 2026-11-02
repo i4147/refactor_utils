@@ -407,6 +407,106 @@ def discover_data_files(
     return data_files
 
 
+#: Packaging metadata files that carry the distribution/package name.
+_METADATA_FILES = ("pyproject.toml", "setup.cfg", "setup.py")
+
+
+def _name_from_pyproject(path: Path) -> str | None:
+    """Read ``project.name`` from a ``pyproject.toml``."""
+    try:
+        try:
+            import tomllib
+        except ImportError:  # pragma: no cover - Python < 3.11 fallback
+            import tomli as tomllib  # type: ignore
+    except ImportError:
+        return None
+    try:
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    except Exception:  # noqa: BLE001
+        return None
+    return data.get("project", {}).get("name") if isinstance(data, dict) else None
+
+
+def _name_from_setup_cfg(path: Path) -> str | None:
+    """Read ``metadata.name`` from a ``setup.cfg``."""
+    try:
+        import configparser
+
+        parser = configparser.ConfigParser()
+        parser.read(path, encoding="utf-8")
+        if parser.has_section("metadata") and parser.has_option("metadata", "name"):
+            return parser.get("metadata", "name").strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _name_from_setup_py(path: Path) -> str | None:
+    """Best-effort read of the ``name`` argument to ``setup()`` in ``setup.py``."""
+    try:
+        import ast
+
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id == "setup"):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "name":
+                continue
+            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                return kw.value.value
+    return None
+
+
+def _metadata_name(directory: Path) -> str | None:
+    """Return the package name declared by metadata files in ``directory``."""
+    for fname in _METADATA_FILES:
+        candidate = directory / fname
+        if not candidate.is_file():
+            continue
+        if fname == "pyproject.toml":
+            name = _name_from_pyproject(candidate)
+        elif fname == "setup.cfg":
+            name = _name_from_setup_cfg(candidate)
+        else:
+            name = _name_from_setup_py(candidate)
+        if name:
+            return name
+    return None
+
+
+def detect_pkg_name(root: Path) -> str:
+    """Detect the consolidated package name for ``root``.
+
+    Investigates ``root`` and up to two directory levels above it (to cover
+    ``src/<pkgname>`` layouts) for packaging metadata (``pyproject.toml``,
+    ``setup.cfg``, ``setup.py``) and returns the declared project/package name.
+    When nothing is found, falls back to ``root``'s own folder name.
+
+    Args:
+        root: Package directory being consolidated.
+
+    Returns:
+        The detected package name, or the folder name as a fallback.
+    """
+    root = root.resolve()
+    current: Path | None = root
+    for _ in range(3):  # root + 2 levels upper
+        if current is None:
+            break
+        name = _metadata_name(current)
+        if name:
+            return name
+        current = current.parent
+    return root.name
+
+
 def detect_pyproject_config(root: Path) -> dict:
     """Read [tool.pyrefactor] from pyproject.toml if present, for --pyproject awareness.
 

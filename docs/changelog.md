@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — prompt.md: `consolidated/<pkgname>.py` layout
+
+- CLI: `pyrefactor [pkg]` — `source` is optional (defaults to `.`); `--mode` is
+  removed. A single `consolidated/<pkgname>.py` is written (was `output/`
+  with `__init__.py` + `_consolidated.py`).
+- Package name detection: `discovery.detect_pkg_name()` reads
+  `pyproject.toml`/`setup.cfg`/`setup.py` in the package folder and up to two
+  directory levels above it (`src/<pkgname>` layouts); falls back to the
+  folder's name.
+- Extraction per prompt.md section 2: constants → `const.py`, functions →
+  `func.py`, classes → `classes.py` (temporary), imports are deduplicated with
+  local/relative imports stripped, the groups are assembled into
+  `consolidated/<pkgname>.py` and the temporary files are removed.
+- `autoall.ensure_all_file()` appends an `__all__` section to a single `.py`
+  file inplace; used after consolidation to annotate the generated file's API.
+- `core.consolidate_package()` implements the new flow; `writer.render_consolidated_single()`
+  renders the single module layout. `core.consolidate()` and the legacy modes
+  remain available as the library API.
+- Tests: `tests/test_consolidated.py` covers the new flow; CLI tests updated.
+
 ## Unreleased — prompt.md 3.4 (`nonlocal`) + 5.2 (post-rename dedupe)
 
 - `global`/`nonlocal` declarations are tracked per scope (`parser._scope_declarations`,

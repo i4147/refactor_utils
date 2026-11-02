@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from loguru import logger
 from . import __version__
-from .core import ConsolidationError, consolidate
+from .core import ConsolidationError, consolidate_package
 from .logging_setup import setup_logging
 
 
@@ -30,21 +30,18 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     p.add_argument(
-        "source", type=Path, help="package directory, project root or single .py file"
+        "source",
+        type=Path,
+        nargs="?",
+        default=Path("."),
+        help="package directory to consolidate (default: current directory)",
     )
     p.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path("output"),
-        help="output directory (default: ./output)",
-    )
-    p.add_argument(
-        "-m",
-        "--mode",
-        choices=["single", "package", "module", "flat", "split"],
-        default="single",
-        help="output layout: single (default: output/__init__.py+_consolidated.py), package (output/<pkg>/...), module (single file), flat (no section headers), split (const/class/func files) [core.py, writer.py] (non-breaking, default single)",
+        default=None,
+        help="output directory (default: <pkg>/consolidated; the single <pkgname>.py file is written inside it)",
     )
     # Parallelism
     p.add_argument(
@@ -94,8 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--copy-data",
         action="store_true",
-        default=True,
-        help="copy data files (json, yaml, csv, txt, etc.) to output, preserving relative paths [discovery.py, core.py] (default: enabled, use --no-copy-data to disable)",
+        default=None,
+        help="copy data files (json, yaml, csv, txt, etc.) to output, preserving relative paths [discovery.py] (opt-in for the consolidated layout)",
     )
     p.add_argument(
         "--no-copy-data",
@@ -379,26 +376,13 @@ def main(argv: list[str] | None = None) -> int:
     # --pyproject / --setup-cfg awareness: if set, treat config as auto-detected (core already handles)
     # If --pyproject given without --config, we pass config=None but core will auto-detect
     try:
-        result = consolidate(
+        result = consolidate_package(
             args.source,
             args.output,
-            mode=args.mode,
             workers=args.workers,
             executor=args.executor,
             exclude=tuple(args.exclude),
             include=tuple(args.include),
-            keep_unused_imports=args.keep_unused_imports,
-            respect_all=args.respect_all,
-            entry=tuple(args.entry),
-            dry_run=args.dry_run,
-            check=args.check,
-            stdout=args.stdout,
-            config=args.config,
-            do_format=do_format,
-            formatter=args.formatter,
-            diff=args.diff,
-            overwrite=args.overwrite,
-            force=args.force,
             keep_docstrings=args.keep_docstrings,
             strip_comments=args.strip_comments,
             keep_comments=args.keep_comments,
@@ -412,15 +396,14 @@ def main(argv: list[str] | None = None) -> int:
             fail_on_warning=args.fail_on_warning,
             max_skipped=args.max_skipped,
             allow_syntax_errors=args.allow_syntax_errors,
+            dry_run=args.dry_run,
+            check=args.check,
             no_parallel=args.no_parallel,
             progress=progress,
+            stdout=args.stdout,
             validate=args.validate or args.validate_import,
             validate_import=args.validate_import,
             copy_data=args.copy_data,
-            data_glob=tuple(args.data_glob),
-            entry_keep_all=entry_keep_all,
-            main_name=args.main_name,
-            generate_guard=args.generate_guard,
             strict=args.strict,
             eol=args.eol,
         )
@@ -441,11 +424,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         if result.diff:
             logger.info("Diff would be {} chars", len(result.diff))
-        # For --check, consolidate already raised on diff non-empty, so we reach here only if check passed
-        if args.check and result.diff:
-            logger.error("Check failed: output would change")
-            return 1
-        # Do not treat skipped as failure unless --strict etc.
         if result.skipped:
             logger.warning("{} file(s) would have been skipped", len(result.skipped))
             if args.strict or args.fail_on_warning:
@@ -454,29 +432,21 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         return 0
     # Normal reporting
-    # If --stdout was used, files list may be empty; handle gracefully
-    if result.files:
+    if args.stdout:
+        logger.success(
+            "{} modules -> stdout ({} exported names)",
+            result.modules,
+            result.exports,
+        )
+    else:
         logger.success(
             "{} modules -> {} ({} exported names)",
             result.modules,
             result.output_dir,
             result.exports,
         )
-    else:
-        if args.stdout:
-            # Already printed to stdout; just log success
-            logger.success(
-                "{} modules -> stdout ({} exported names)",
-                result.modules,
-                result.exports,
-            )
-        else:
-            logger.success(
-                "{} modules -> {} ({} exported names)",
-                result.modules,
-                result.output_dir,
-                result.exports,
-            )
+    if result.all_added:
+        logger.info("autoall: __all__ section added to {}", result.output_dir)
     if result.copied_data_files:
         logger.info("Copied {} data file(s)", len(result.copied_data_files))
     if result.skipped:
@@ -495,9 +465,7 @@ def main(argv: list[str] | None = None) -> int:
             "Failing due to --fail-on-warning: {} warnings", len(result.warnings)
         )
         return 1
-    # --validate already handled in core; but if validate failed it would have raised
     if args.validate and not result.validated and not args.stdout:
-        # In non-dry-run, validated flag indicates compile passed; if not validated but validate requested, warn
         logger.warning("Validation requested but not marked passed")
     return 0
 

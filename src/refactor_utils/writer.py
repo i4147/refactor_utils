@@ -251,6 +251,76 @@ def render_split(plan: Plan, source_name: str) -> dict[str, str]:
     return out
 
 
+def render_consolidated_single(
+    plan: Plan,
+    source_name: str,
+    namespace: bool = False,
+    preserve_modules: bool = False,
+    source_map: bool = False,
+) -> str:
+    """Render the plan as one consolidated module file.
+
+    Layout (matching the ``consolidated/<pkgname>.py`` contract):
+
+    ``__future__`` section → optimized (deduped, local-imports stripped)
+    import section → ``TYPE_CHECKING`` guard → constants → classes →
+    functions → entry points.  Sections with no blocks are omitted.
+
+    Args:
+        plan: Plan produced by the resolver.
+        source_name: Name of the consolidated source, used in the docstring.
+        namespace: Emit ``# namespace:`` comments per block.
+        preserve_modules: Emit ``# Original module:`` comments per block.
+        source_map: Emit ``# source: file:line`` comments per block.
+
+    Returns:
+        The generated single-module source.
+    """
+
+    _RULE = "# " + "-" * 75
+    _TITLES = {
+        "const": "Constants",
+        "class": "Classes",
+        "func": "Functions",
+        "entry": "Entry points",
+    }
+
+    parts: list[str] = [
+        f'"""Consolidated from ``{source_name}`` by pyrefactor (generated file)."""'
+    ]
+    if plan.future_names:
+        parts.append(future_section(plan.future_names))
+    if plan.imports_text:
+        parts.append(plan.imports_text)
+    if plan.guards:
+        parts.append("\n\n".join(plan.guards))
+
+    buckets: dict[str, list[str]] = {"const": [], "class": [], "func": [], "entry": []}
+    for blk in plan.blocks:
+        # Prefix comments for debugging / provenance
+        prefix = []
+        if preserve_modules and blk.module:
+            prefix.append(f"# Original module: {blk.module}")
+        if source_map and blk.origin:
+            prefix.append(f"# source: {blk.origin}")
+        if namespace and blk.module:
+            prefix.append(f"# namespace: {blk.module}")
+        text = blk.text
+        if prefix:
+            text = "\n".join(prefix) + "\n" + text
+        buckets[blk.section].append(text)
+
+    for section in ("const", "class", "func", "entry"):
+        texts = buckets[section]
+        if not texts:
+            continue
+        parts.append(f"{_RULE}\n# {_TITLES[section]}\n{_RULE}")
+        parts.append("\n\n".join(texts))
+
+    text = "\n\n\n".join(p for p in parts if p).rstrip() + "\n"
+    return text
+
+
 def render_package(plan: Plan, source_name: str, **kwargs: Any) -> str:
     """Render the consolidated module for package mode.
 

@@ -3,14 +3,14 @@
 Generated from `pyrefactor --help`. Every flag lists the module it touches.
 
 ```
-usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
-                  [-j WORKERS] [--jobs JOBS] [--executor {process,thread}]
-                  [--no-parallel] [--progress] [--progress-bar] [-x GLOB]
-                  [--include GLOB] [--copy-data] [--no-copy-data]
-                  [--data-glob GLOB] [--entry MODULE] [--entry-keep-all]
-                  [--main-name NAME] [--generate-guard] [--keep-all-mains]
-                  [--keep-unused-imports] [--imports {prune,keep,strict}]
-                  [--respect-all] [--all {ignore,respect,merge,recompute}]
+usage: pyrefactor [-h] [-o OUTPUT] [-j WORKERS] [--jobs JOBS]
+                  [--executor {process,thread}] [--no-parallel] [--progress]
+                  [--progress-bar] [-x GLOB] [--include GLOB] [--copy-data]
+                  [--no-copy-data] [--data-glob GLOB] [--entry MODULE]
+                  [--entry-keep-all] [--main-name NAME] [--generate-guard]
+                  [--keep-all-mains] [--keep-unused-imports]
+                  [--imports {prune,keep,strict}] [--respect-all]
+                  [--all {ignore,respect,merge,recompute}]
                   [--rename-strategy {prefix,suffix,module_path,error}]
                   [--dedupe {none,safe,aggressive}] [--keep-docstrings]
                   [--strip-docstrings] [--keep-comments] [--strip-comments]
@@ -23,17 +23,23 @@ usage: pyrefactor [-h] [-o OUTPUT] [-m {single,package,module,flat,split}]
                   [--allow-syntax-errors] [--eol {lf,crlf,preserve}]
                   [--log-level {TRACE,DEBUG,INFO,WARNING,ERROR}]
                   [--log-file LOG_FILE] [--version]
-                  source
+                  [source]
 ```
 
 ## Positional
 
-- `source` — package directory, project root or single `.py` file.
+- `source` — package directory (or single `.py` file) to consolidate;
+  defaults to the current directory.
 
-## Output & Mode
+## Output
 
-- `-o OUTPUT, --output OUTPUT` — output directory (default `./output`).
-- `-m {single,package,module,flat,split}, --mode ...` — layout; `single` is `output/__init__.py`+`_consolidated.py`; others in `core.py`/`writer.py`.
+- `-o OUTPUT, --output OUTPUT` — output directory (default:
+  `<pkg>/consolidated`). A single `<pkgname>.py` file is written inside it.
+
+The CLI no longer accepts `--mode`; it always produces the consolidated
+single-file layout (`consolidated/<pkgname>.py`) described in Quickstart.
+The legacy multi-file layouts (`--mode package|module|flat|split`) remain
+available through the library API (`refactor_utils.core.consolidate`).
 
 ## Parallelism
 

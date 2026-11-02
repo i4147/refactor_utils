@@ -108,7 +108,43 @@ Example data files demonstrating preservation:
 
 - `prompt.md` — original AI agent task (features/edge cases to implement).
 - `mkdocs.yml` — Material theme, nav, plugins (`search`, `mkdocstrings`).
-- `docs/` — see [Architecture](architecture.md).
-- `tests/` — pytest suite (discovery, parser, resolver, writer, cli, core, data, integration).
+- `docs/` — see [Architecture](architecture.md); `docs/README.md` explains how to build the HTML docs and the single-file PDF.
+- `tests/` — pytest suite (discovery, parser, resolver, writer, cli, core, data, integration). Includes `tests/test_consolidated.py` for the `consolidated/<pkgname>.py` flow.
 - `examples/` — runnable demos (basic, advanced, programmatic, data_files_example, config_example).
+- `arena/` — helper scripts (bash/python) used during this session.
 - `.gitignore` — ignores `output/`, `output_*/`, `.venv/`, `__pycache__/`, etc.
+
+## `src/refactor_utils/discovery.py` (additions)
+
+- `detect_pkg_name(root)` — detects the consolidated package name by reading
+  `pyproject.toml` (`[project] name`), `setup.cfg` (`[metadata] name`) or
+  `setup.py` (`setup(name=...)`) in the package folder and up to two directory
+  levels above it (covering `src/<pkgname>` layouts); falls back to the
+  folder's own name.
+
+## `src/refactor_utils/core.py` (additions)
+
+- `consolidate_package(source, output=None, **kwargs)` — implements the
+  `pyrefactor [pkg]` contract: detects the package name, creates a
+  `consolidated` output directory, runs the existing
+  `discover → parse → resolve` pipeline, writes temporary `const.py` /
+  `classes.py` / `func.py` section files, assembles them (plus the optimized,
+  local-imports-stripped import section and entry points) into a single
+  `consolidated/<pkgname>.py`, removes the temporaries, and delegates
+  `__all__` generation to `autoall.ensure_all_file`. Returns a
+  `ConsolidationResult` extended with `all_added` and `pkg_name`.
+
+## `src/refactor_utils/writer.py` (additions)
+
+- `render_consolidated_single(plan, source_name)` — renders one module file:
+  `__future__` → optimized imports → `TYPE_CHECKING` guard → constants →
+  classes → functions → entry points, with per-block namespace/source-map
+  comments when requested.
+
+## `autoall/src/autoall/__init__.py` (additions)
+
+- `ensure_all_file(path, *, persist=True)` — scans a single `.py` module file
+  (no import required) for public top-level names (functions, classes,
+  constants) and writes/updates an `__all__ = [...]` block between the
+  `# --- auto-generated __all__ ---` markers inplace (atomically). Exported
+  as `autoall.ensure_all_file`.
