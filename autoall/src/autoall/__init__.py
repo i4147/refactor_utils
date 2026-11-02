@@ -12,6 +12,7 @@ __version__ = "0.2.0"
 __all__ = [
     "__version__",
     "ensure_all",
+    "ensure_all_file",
     "install",
     "uninstall",
     "is_installed",
@@ -208,6 +209,95 @@ def _build_block(names: Iterable[str]) -> str:
     lines.extend(f"    {n!r}," for n in names)
     lines.extend(["]", _MARKER_END, ""])
     return "\n".join(lines)
+
+
+def _collect_names_module(tree: ast.Module) -> list[str]:
+    """Collect public top-level names from a single module's AST.
+
+    Args:
+        tree: Parsed module tree.
+
+    Returns:
+        Sorted, de-duplicated public names (functions, classes, top-level
+        constants/assignments). Imported symbols are not included — they are
+        external dependencies of the consolidated module, not its own API.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str) -> None:
+        if name == "__all__" or name in seen or not _public(name, False):
+            return
+        seen.add(name)
+        names.append(name)
+
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            add(node.name)
+        elif isinstance(node, getattr(ast, "TypeAlias", ())):
+            if isinstance(node.name, ast.Name):
+                add(node.name.id)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for sub in ast.walk(target):
+                    if isinstance(sub, ast.Name):
+                        add(sub.id)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                add(node.target.id)
+    return sorted(names)
+
+
+def ensure_all_file(
+    path: str | Path,
+    *,
+    persist: bool = True,
+) -> list[str]:
+    """Scan a single ``.py`` module file and (re)generate its ``__all__`` block.
+
+    Works like :func:`ensure_all` but on a plain module file instead of an
+    importable package: the file is parsed with :mod:`ast`, public top-level
+    names (functions, classes, constants) are collected, and an
+    ``__all__ = [...]`` block between the autoall markers is written back to
+    the same file (atomically, via :func:`_atomic_write`).
+
+    Args:
+        path: Path to the ``.py`` file to process.
+        persist: When ``True`` (default), write the block back to the file;
+            otherwise only return the computed names.
+
+    Returns:
+        The list of public names placed in ``__all__``.
+    """
+    p = Path(path)
+    try:
+        src = p.read_text(encoding="utf-8")
+    except OSError as exc:
+        warnings.warn(f"autoall: cannot read {p}: {exc}", stacklevel=2)
+        return []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        warnings.warn(f"autoall: cannot parse {p}: {exc}", stacklevel=2)
+        return []
+    names = _collect_names_module(tree)
+    block = _build_block(names)
+    if _MARKER_START in src and _MARKER_END in src:
+        before, rest = src.split(_MARKER_START, 1)
+        after = rest.split(_MARKER_END, 1)[1]
+        new_src = (
+            before.rstrip() + "\n" + block + "\n" + after.lstrip("\n")
+        ).rstrip() + "\n"
+    else:
+        new_src = src.rstrip() + "\n" + block
+    if persist and new_src != src:
+        try:
+            _atomic_write(p, new_src)
+        except OSError as exc:
+            warnings.warn(f"autoall: cannot persist to {p}: {exc}", stacklevel=2)
+    return names
 
 
 def _resolve_path(target: str | Path) -> Path:

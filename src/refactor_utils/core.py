@@ -15,12 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 from loguru import logger
-from .discovery import discover, discover_data_files, detect_pyproject_config
+from .discovery import discover, discover_data_files, detect_pkg_name, detect_pyproject_config
+from .imports import future_section
 from .models import ModuleInfo, SourceFile
 from .parser import parse_module_file
 from .resolver import Plan, Resolver, ResolverError
 from .writer import (
     render_consolidated,
+    render_consolidated_single,
     render_init,
     render_flat,
     render_split,
@@ -70,6 +72,8 @@ class ConsolidationResult:
     validated: bool = False
     dry_run: bool = False
     plan: Plan | None = None  # for --dry-run introspection
+    all_added: bool = False  # whether autoall appended an __all__ section
+    pkg_name: str = ""  # detected package name (consolidate_package only)
 
 
 #: Warnings that mean the generated output may be wrong; ``--strict`` refuses to
@@ -1180,3 +1184,420 @@ def consolidate(
 
     # Fallback to single
     raise ConsolidationError(f"unhandled mode {mode!r}")
+
+
+def consolidate_package(
+    source: Path,
+    output: Path | None = None,
+    *,
+    workers: int | None = None,
+    executor: str = "process",
+    exclude: tuple[str, ...] = (),
+    include: tuple[str, ...] = (),
+    keep_docstrings: bool = True,
+    strip_comments: bool = False,
+    keep_comments: bool = True,
+    rename_strategy: str = "prefix",
+    dedupe: str = "safe",
+    imports_mode: str = "prune",
+    all_mode: str = "ignore",
+    fail_on_warning: bool = False,
+    max_skipped: int | None = None,
+    allow_syntax_errors: bool = False,
+    no_parallel: bool = False,
+    progress: bool = False,
+    dry_run: bool = False,
+    check: bool = False,
+    validate: bool = False,
+    validate_import: bool = False,
+    stdout: bool = False,
+    copy_data: bool = False,
+    strict: bool = False,
+    eol: str = "lf",
+    namespace: bool = False,
+    preserve_modules: bool = False,
+    source_map: bool = False,
+) -> ConsolidationResult:
+    """Consolidate a package into a single ``consolidated/<pkgname>.py`` file.
+
+    Implements the ``pyrefactor <pkg path>`` contract:
+
+    * the package name is detected from packaging metadata
+      (``pyproject.toml``/``setup.cfg``/``setup.py``) in the package folder
+      and up to two directory levels above it (covering ``src/<pkgname>``
+      layouts); when nothing is found, the current folder's name is used;
+    * a ``consolidated`` subdirectory is created inside the package directory
+      (or at ``output`` when given) containing a single ``<pkgname>.py``;
+    * constants, functions and classes are extracted from the whole package,
+      name collisions are resolved by the resolver, and each group is saved to
+      a temporary file (``const.py``, ``func.py``, ``classes.py``);
+    * imports are extracted, de-duplicated, local (relative) imports stripped
+      by the resolver, and the optimized import section is written to
+      ``consolidated/<pkgname>.py``;
+    * the temporary ``const.py``/``classes.py``/``func.py`` contents are
+      appended and the temporary files are removed;
+    * :mod:`autoall` is used to append an ``__all__`` section to the file.
+
+    Args:
+        source: Package directory to consolidate.
+        output: Output directory; defaults to ``source / "consolidated"``.
+            The single ``<pkgname>.py`` file is written inside it.
+        workers: Number of parsing workers; defaults to the CPU count.
+        executor: ``"process"`` or ``"thread"`` pool for parsing.
+        exclude: Additional glob patterns to skip.
+        include: Glob patterns that re-include otherwise excluded files.
+        keep_docstrings: Keep docstrings in the output.
+        strip_comments: Drop standalone comment lines.
+        keep_comments: Keep comments at all.
+        rename_strategy: Collision policy: ``prefix``, ``suffix``,
+            ``module_path`` or ``error``.
+        dedupe: Duplicate removal: ``none``, ``safe`` or ``aggressive``.
+        imports_mode: Import handling: ``prune``, ``keep`` or ``strict``.
+        all_mode: ``__all__`` handling: ``ignore``, ``respect``, ``merge`` or
+            ``recompute``.
+        fail_on_warning: Fail when any warning was emitted.
+        max_skipped: Fail when more than this many files were skipped.
+        allow_syntax_errors: Parse files with syntax errors partially.
+        no_parallel: Force single-process parsing.
+        progress: Show a tqdm progress bar while parsing.
+        validate: Compile the generated file.
+        validate_import: With ``validate``, also import the generated module.
+        copy_data: Copy non-Python data files next to the output.
+        strict: Promote risky warnings and import cycles to hard errors.
+        eol: Line endings for generated files: ``lf``, ``crlf`` or ``preserve``.
+        namespace: Emit module namespace comments per block.
+        preserve_modules: Emit per-block origin comments.
+        source_map: Emit ``file:line`` comments per block.
+
+    Returns:
+        A :class:`ConsolidationResult` describing what was written.
+
+    Raises:
+        ConsolidationError: When the input cannot be parsed or the plan cannot
+            be built safely.
+    """
+    source, output = Path(source), Path(output) if output is not None else None
+    if not source.exists():
+        raise ConsolidationError(f"source does not exist: {source}")
+    if source.is_file():
+        pkg_name = source.stem
+    else:
+        pkg_name = detect_pkg_name(source)
+    if output is not None:
+        out_dir = Path(output)
+    elif source.is_file():
+        out_dir = source.parent / "consolidated"
+    else:
+        out_dir = source / "consolidated"
+
+    files = discover(source, exclude=exclude, include=include, skip_dirs=[out_dir])
+    if eol == "preserve":
+        eol = _detect_eol(files)
+    data_files = discover_data_files(
+        source,
+        exclude=exclude,
+        include=include,
+        skip_dirs=[out_dir],
+        copy_data=copy_data,
+    )
+    if not files:
+        raise ConsolidationError(f"no python files found under {source}")
+    logger.info("Parsing {} files for package {!r}", len(files), pkg_name)
+    parsed = _parse_all(
+        files,
+        workers or os.cpu_count() or 1,
+        executor,
+        keep_docstrings=keep_docstrings,
+        strip_comments=strip_comments,
+        keep_comments=keep_comments,
+        allow_syntax_errors=allow_syntax_errors,
+        show_progress=progress,
+    )
+    modules: dict[str, ModuleInfo] = {}
+    skipped: list[str] = []
+    warnings_acc: list[str] = []
+    for name, info in parsed.items():
+        for w in info.warnings:
+            logger.warning(w)
+            warnings_acc.append(w)
+        if info.errors:
+            for e in info.errors:
+                logger.error(e)
+            skipped.append(info.path)
+            continue
+        modules[name] = info
+    if not modules:
+        raise ConsolidationError("no module could be parsed")
+    if max_skipped is not None and len(skipped) > max_skipped:
+        raise ConsolidationError(
+            f"too many skipped files: {len(skipped)} > --max-skipped {max_skipped}"
+        )
+    if fail_on_warning and warnings_acc:
+        raise ConsolidationError(
+            f"fail-on-warning: {len(warnings_acc)} warning(s) emitted"
+        )
+    resolver = Resolver(
+        modules,
+        keep_unused_imports=False,
+        respect_all=False,
+        entry=(),
+        workers=max(1, workers or os.cpu_count() or 1),
+        rename_strategy=rename_strategy,
+        dedupe=dedupe,
+        imports_mode=imports_mode,
+        all_mode=all_mode,
+        namespace=namespace,
+        preserve_modules=preserve_modules,
+        source_map=source_map,
+        strict=strict,
+    )
+    try:
+        plan: Plan = resolver.build()
+    except ResolverError as exc:
+        raise ConsolidationError(str(exc)) from exc
+    warnings_acc.extend(plan.warnings)
+
+    # --- Render sections into temporary files (const / classes / func) ---
+    sections: dict[str, list[str]] = {"const": [], "class": [], "func": []}
+    entry_texts: list[str] = []
+    for blk in plan.blocks:
+        text = blk.text
+        if blk.section == "entry":
+            entry_texts.append(text)
+        elif blk.section in sections:
+            sections[blk.section].append(text)
+
+    _RULE = "# " + "-" * 75
+    _TITLES = {"const": "Constants", "class": "Classes", "func": "Functions"}
+
+    def section_file(section: str, texts: list[str]) -> str:
+        parts = []
+        if texts:
+            parts.append(f"{_RULE}\n# {_TITLES[section]}\n{_RULE}")
+            parts.append("\n\n".join(texts))
+        return "\n\n".join(p for p in parts if p)
+
+    # --- Assemble the single consolidated file ---
+    head_parts: list[str] = [
+        f'"""Consolidated from ``{pkg_name}`` by pyrefactor (generated file)."""'
+    ]
+    if plan.future_names:
+        head_parts.append(future_section(plan.future_names))
+    if plan.imports_text:
+        head_parts.append(plan.imports_text)
+    if plan.guards:
+        head_parts.append("\n\n".join(plan.guards))
+
+    body_parts = list(head_parts)
+    body_parts.append(section_file("const", sections["const"]))
+    body_parts.append(section_file("class", sections["class"]))
+    body_parts.append(section_file("func", sections["func"]))
+    if entry_texts:
+        body_parts.append(
+            f"{_RULE}\n# Entry points\n{_RULE}\n" + "\n\n".join(entry_texts)
+        )
+
+    final_text = (
+        "\n\n\n".join(p for p in body_parts if p).rstrip() + "\n"
+    )
+    final_text = _apply_eol(final_text, eol)
+    target_path = out_dir / f"{pkg_name}.py"
+
+    # --- __all__ block via autoall (computed in-memory so --check/stdout
+    # --- see the exact bytes that will land on disk) ---------------------
+    all_added = False
+    expected_text = final_text
+    try:
+        from autoall import ensure_all_file, _build_block  # type: ignore
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(final_text)
+            tmp_name = tf.name
+        try:
+            names = ensure_all_file(tmp_name, persist=False)
+            if names:
+                expected_text = final_text.rstrip() + "\n" + _build_block(names)
+                all_added = True
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+    except ImportError:
+        logger.info("autoall not installed — skipping __all__ generation")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("autoall: could not compute __all__ section: {}", exc)
+
+    if stdout:
+        sys.stdout.write(expected_text)
+        logger.success(
+            "{} modules -> stdout ({} exported names)",
+            len(modules),
+            sum(len(v) for v in plan.exports.values()),
+        )
+        return ConsolidationResult(
+            out_dir,
+            [],
+            len(modules),
+            skipped,
+            sum(len(v) for v in plan.exports.values()),
+            warnings_acc,
+            "",
+            expected_text,
+            [],
+            all_added,
+            False,
+            plan,
+        )
+
+    if dry_run or check:
+        logger.info(
+            "Dry-run: would write {} modules to {}/{}.py",
+            len(modules),
+            out_dir,
+            pkg_name,
+        )
+        if check:
+            if not target_path.is_file():
+                raise ConsolidationError(
+                    f"check failed: {target_path} does not exist "
+                    "(run without --check to generate it)"
+                )
+            old_text = target_path.read_text(encoding="utf-8")
+            if old_text != expected_text:
+                import difflib
+
+                diff = "".join(
+                    difflib.unified_diff(
+                        old_text.splitlines(keepends=True),
+                        expected_text.splitlines(keepends=True),
+                        fromfile=f"a/{target_path.name}",
+                        tofile=f"b/{target_path.name}",
+                    )
+                )
+                raise ConsolidationError(
+                    f"check failed: output would change ({target_path})\n{diff}"
+                )
+            logger.success("Check passed: {} up to date", target_path)
+        return ConsolidationResult(
+            out_dir,
+            [],
+            len(modules),
+            skipped,
+            sum(len(v) for v in plan.exports.values()),
+            warnings_acc,
+            "",
+            expected_text,
+            [],
+            all_added,
+            True,
+            plan,
+        )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # --- Render sections into temporary files (const / classes / func) ---
+    const_path = out_dir / "const.py"
+    classes_path = out_dir / "classes.py"
+    func_path = out_dir / "func.py"
+    const_path.write_text(section_file("const", sections["const"]) + "\n", encoding="utf-8")
+    classes_path.write_text(section_file("class", sections["class"]) + "\n", encoding="utf-8")
+    func_path.write_text(section_file("func", sections["func"]) + "\n", encoding="utf-8")
+
+    # Try to compile before touching the temp files
+    try:
+        compile(expected_text, f"{pkg_name}.py", "exec")
+    except SyntaxError as exc:
+        # Clean up temp files on failure
+        for tmp in (const_path, classes_path, func_path):
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        raise ConsolidationError(f"generated {pkg_name}.py is not valid python: {exc}")
+
+    target_path.write_text(expected_text, encoding="utf-8")
+
+    # Remove the temporary section files
+    for tmp in (const_path, classes_path, func_path):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+    # Idempotent inplace refresh of the __all__ block (no-op when already
+    # present, since expected_text already contains it).
+    try:
+        from autoall import ensure_all_file  # type: ignore
+
+        ensure_all_file(str(target_path), persist=True)
+        logger.info("autoall: __all__ section ensured in {}", target_path)
+    except ImportError:
+        pass  # already reported above
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("autoall: could not refresh __all__ section: {}", exc)
+
+    # Optional validation (re-compile after autoall edit)
+    validated = False
+    if validate:
+        try:
+            compile(target_path.read_text(encoding="utf-8"), str(target_path), "exec")
+            validated = True
+            logger.success("Validation compile passed")
+        except SyntaxError as exc:
+            raise ConsolidationError(f"validate: {target_path} failed to compile: {exc}")
+        if validate_import and validated:
+            try:
+                import importlib.util
+
+                spec = importlib.util.spec_from_file_location(
+                    f"_consolidated_validate_{pkg_name}", str(target_path)
+                )
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)  # type: ignore
+                    logger.success("Validation import succeeded for {}", target_path)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Validation import failed: {}", exc)
+                raise ConsolidationError(f"validate import failed: {exc}")
+
+    # Copy data files next to the output
+    copied: list[Path] = []
+    for df in data_files:
+        dest = out_dir / df.relative
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import shutil
+
+            shutil.copy2(df.path, dest)
+            copied.append(dest)
+            logger.info("Copied data file {} -> {}", df.path, dest)
+        except OSError as exc:
+            logger.error("Failed to copy data file {}: {}", df.path, exc)
+            if fail_on_warning:
+                raise ConsolidationError(f"data copy failed: {exc}")
+
+    exports = sum(len(v) for v in plan.exports.values())
+    logger.success(
+        "{} modules -> {}/{}.py ({} exported names)",
+        len(modules),
+        out_dir,
+        pkg_name,
+        exports,
+    )
+    return ConsolidationResult(
+        out_dir,
+        [target_path],
+        len(modules),
+        skipped,
+        exports,
+        warnings_acc,
+        "",
+        "",
+        copied,
+        validated,
+        False,
+        plan,
+        all_added=all_added,
+        pkg_name=pkg_name,
+    )

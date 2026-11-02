@@ -2,20 +2,25 @@
 
 **Consolidate a small/medium Python module, library or project into one dependency-ordered file.**
 
-`pyrefactor` parses every file with **tree-sitter** (parallel workers), orders blocks by import-time dependencies, resolves collisions, merges imports, and emits `output/__init__.py` + `output/_consolidated.py` — with full support for data files, source maps, and multiple output layouts.
+`pyrefactor` parses every file with **tree-sitter** (parallel workers), orders blocks by import-time dependencies, resolves collisions, merges imports, and emits a single `consolidated/<pkgname>.py` file — with full support for data files, source maps, and the legacy multi-file layouts.
 
 ```bash
 pip install -e .
-pyrefactor path/to/package -o output
+# Consolidate the package in the current directory (default)
+pyrefactor
+# Or point at a package directory
+pyrefactor path/to/package
 ```
 
-Output (`--mode single`, default):
+Output:
 
 ```
-output/
-  __init__.py        # re-exports public constants, classes, functions + __all__
-  _consolidated.py   # imports -> constants -> classes -> functions -> entry points
+path/to/package/
+  consolidated/
+    <pkgname>.py   # imports -> constants -> classes -> functions -> entry points + __all__
 ```
+
+The package name (`<pkgname>`) is detected from `pyproject.toml`/`setup.cfg`/`setup.py` in the package folder and up to two directory levels above it (covering `src/<pkgname>` layouts); when nothing is found, the current folder's name is used. `autoall` appends an `__all__` section to the generated file.
 
 ## What it does
 
