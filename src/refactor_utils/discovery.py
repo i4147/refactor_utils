@@ -106,12 +106,40 @@ def detect_base(root: Path) -> Path:
     return root
 
 
+def _matches(rel: str, posix: str, name: str, patterns: tuple[str, ...]) -> bool:
+    """Glob match against the source-relative path (and its trailing parts)."""
+    for pat in patterns:
+        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(posix, pat):
+            return True
+        if fnmatch.fnmatch(name, pat):
+            return True
+        # "pkg/*.py" should also match "a/pkg/b.py" style relative paths
+        if fnmatch.fnmatch(f"*/{rel}", f"*/{pat}"):
+            return True
+        if rel.endswith("/" + pat.lstrip("*/")) and pat.startswith("*/"):
+            return True
+    return False
+
+
+def _dir_included(rel: str, name: str, include: tuple[str, ...]) -> bool:
+    """True when an excluded directory may contain paths matched by --include."""
+    for pat in include:
+        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(name, pat):
+            return True
+        if pat.startswith(rel.rstrip("/") + "/"):
+            return True
+        if fnmatch.fnmatch(rel + "/dummy", pat):
+            return True
+    return False
+
+
 def _is_excluded(
     path: Path,
     posix: str,
     name: str,
     exclude: tuple[str, ...],
     include: tuple[str, ...],
+    rel: str = "",
 ) -> bool:
     """Precedence: default excludes < --include < --exclude.
 
@@ -120,18 +148,15 @@ def _is_excluded(
     - --include can re-include files that would otherwise be excluded by defaults,
       but cannot override explicit --exclude.
     """
+    rel = rel or posix
     # Check explicit exclude first (highest priority)
-    if exclude and any(
-        fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in exclude
-    ):
+    if exclude and _matches(rel, posix, name, exclude):
         return True
     # Check default globs
     default_hit = any(fnmatch.fnmatch(name, g) for g in EXCLUDED_FILE_GLOBS)
     if default_hit:
         # Allow include to rescue it
-        if include and any(
-            fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(name, pat) for pat in include
-        ):
+        if include and _matches(rel, posix, name, include):
             logger.debug(
                 "Re-included {} via --include (overrode default exclude)", path
             )
@@ -159,13 +184,19 @@ def _walk(
     extra_globs: tuple[str, ...],
     include: tuple[str, ...] = (),
     follow_symlinks: bool = False,
+    base: Path | None = None,
 ) -> Iterable[Path]:
     try:
         entries = sorted(directory.iterdir(), key=lambda p: p.name)
     except OSError as exc:
         logger.error("Cannot list {}: {}", directory, exc)
         return
+    base = base or directory
     for entry in entries:
+        try:
+            rel = entry.relative_to(base).as_posix()
+        except ValueError:
+            rel = entry.as_posix()
         # Symlink handling: optionally follow, but avoid cycles via skip set
         is_symlink = entry.is_symlink()
         if is_symlink and not follow_symlinks:
@@ -183,7 +214,7 @@ def _walk(
             # For symlinks to files, treat like regular file but log
             if entry.suffix == ".py":
                 posix = entry.as_posix()
-                if _is_excluded(entry, posix, entry.name, extra_globs, include):
+                if _is_excluded(entry, posix, entry.name, extra_globs, include, rel):
                     continue
                 logger.info("Including symlinked file {}", entry)
                 yield entry
@@ -191,13 +222,7 @@ def _walk(
         if entry.is_dir():
             if entry.name in EXCLUDED_DIRS or entry.name.endswith(".egg-info"):
                 # But allow if explicitly included via --include
-                if include and any(
-                    fnmatch.fnmatch(entry.as_posix(), pat)
-                    or fnmatch.fnmatch(entry.name, pat)
-                    for pat in include
-                ):
-                    pass
-                else:
+                if not _dir_included(rel, entry.name, include):
                     continue
             try:
                 resolved = entry.resolve()
@@ -205,12 +230,13 @@ def _walk(
                 continue
             if resolved in skip:
                 continue
-            yield from _walk(entry, skip, extra_globs, include, follow_symlinks)
+            yield from _walk(
+                entry, skip, extra_globs, include, follow_symlinks, base
+            )
         elif entry.suffix == ".py":
             posix = entry.as_posix()
-            if _is_excluded(entry, posix, entry.name, extra_globs, include):
+            if _is_excluded(entry, posix, entry.name, extra_globs, include, rel):
                 continue
-            # Also check extra_globs as full path patterns (already in _is_excluded for explicit exclude)
             yield entry
         else:
             # Non-python files are not yielded here; see discover_data_files
@@ -233,7 +259,7 @@ def discover(
     skip = {p.resolve() for p in skip_dirs if p.exists()}
     # Also skip output inside source tree already handled via skip_dirs
     files: list[SourceFile] = []
-    for path in _walk(walk_root, skip, exclude, include, follow_symlinks):
+    for path in _walk(walk_root, skip, exclude, include, follow_symlinks, base):
         try:
             parts = list(path.relative_to(base).with_suffix("").parts)
         except ValueError:
@@ -245,9 +271,8 @@ def discover(
         if not parts:
             parts = [base.name]
         files.append(SourceFile(path, ".".join(parts), is_pkg))
-    # Handle namespace packages: directories without __init__.py but with submodules
-    # Already covered because _walk recurses regardless of __init__.py presence.
-    # Log if we found namespace-like roots
+    # Namespace packages (directories without __init__.py) need no special case:
+    # _walk recurses regardless of __init__.py presence.
     if not files:
         logger.warning("No python files discovered under {} (base={})", root, base)
     return files
@@ -292,11 +317,11 @@ def discover_data_files(
         for entry in entries:
             if entry.is_dir():
                 if entry.name in EXCLUDED_DIRS or entry.name.endswith(".egg-info"):
-                    if include and any(
-                        fnmatch.fnmatch(entry.as_posix(), pat) for pat in include
-                    ):
-                        pass
-                    else:
+                    try:
+                        rel = entry.relative_to(base).as_posix()
+                    except ValueError:
+                        rel = entry.as_posix()
+                    if not _dir_included(rel, entry.name, include):
                         continue
                 try:
                     resolved = entry.resolve()
@@ -307,26 +332,20 @@ def discover_data_files(
                 # Avoid descending into output if it lives inside source
                 stack.append(entry)
             elif entry.is_file():
-                # Skip python files (handled separately) and default excluded globs
+                # Skip python files (they are handled by :func:`discover`).
                 if entry.suffix == ".py":
                     continue
-                posix = entry.as_posix()
-                # Apply same exclusion logic
-                if exclude and any(
-                    fnmatch.fnmatch(posix, pat) or fnmatch.fnmatch(entry.name, pat)
-                    for pat in exclude
-                ):
+                try:
+                    rel = entry.relative_to(base).as_posix()
+                except ValueError:
+                    rel = entry.name
+                if exclude and _matches(rel, entry.as_posix(), entry.name, exclude):
                     continue
                 if entry.name in EXCLUDED_FILE_GLOBS and not (
-                    include and any(fnmatch.fnmatch(posix, pat) for pat in include)
+                    include and _matches(rel, entry.as_posix(), entry.name, include)
                 ):
                     continue
-                # Identify as data file
                 if _is_data_file(entry):
-                    try:
-                        rel = entry.relative_to(base).as_posix()
-                    except ValueError:
-                        rel = entry.name
                     data_files.append(DataFile(entry, rel))
                     logger.debug("Found data file: {} -> {}", entry, rel)
     if data_files:
@@ -335,9 +354,10 @@ def discover_data_files(
 
 
 def detect_pyproject_config(root: Path) -> dict:
-    """Read [tool.pyrefactor] from pyproject.toml if present, for --pyproject awareness.
+    """Read ``[tool.pyrefactor]`` from the closest pyproject.toml.
 
-    Returns a dict of config values (exclude, include, entry, etc.) or empty.
+    Searches the source directory and its parents.  Returns a dict of config
+    values (exclude, include, entry, imports, format, copy_data, ...) or ``{}``.
     """
     # Search upwards from root for pyproject.toml and setup.cfg
     candidates = []

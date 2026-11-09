@@ -18,6 +18,8 @@ class ImportSpec:
     is_from: bool = False
     star: bool = False
     relative: bool = False
+    # True when the import lived inside an `if TYPE_CHECKING:` block.
+    type_checking: bool = False
 
     @property
     def local_name(self) -> str | None:
@@ -48,7 +50,6 @@ class Block:
     occs: list[Occ]
     order: int
     bid: int = -1
-    # extended fields for source-map / preserve-modules (picklable)
     orig_path: str = ""
     start_line: int = 0
     end_line: int = 0
@@ -58,7 +59,7 @@ class Block:
     def primary(self) -> str:
         return self.names[0] if self.names else ""
 
-    def merge(self, other: "Block") -> None:
+    def merge(self, other: Block) -> None:
         shift = len(self.source) + 1
         for occ in other.occs:
             occ.start += shift
@@ -74,6 +75,10 @@ class Block:
 class GuardBlock:
     text: str
     specs: list[ImportSpec]
+    # Names bound by the *body* of the guard when it is more than an import
+    # wrapper (e.g. ``try: import x; ok = True`` binds ``x`` and ``ok``).
+    bound_names: list[str] = field(default_factory=list)
+    conditional: bool = False
 
 
 @dataclass
@@ -92,7 +97,7 @@ class ModuleInfo:
 
 @dataclass(frozen=True)
 class SourceFile:
-    path: "object"
+    path: object
     module: str
     is_pkg: bool
 
@@ -101,30 +106,6 @@ class SourceFile:
 class DataFile:
     """Non-Python data file discovered alongside the source tree."""
 
-    path: "object"
+    path: object
     relative: str  # relative to source base, for output placement
     kind: str = "data"
-
-
-@dataclass
-class ConsolidationOptions:
-    """Picklable bundle of user options that affect parser/resolver/writer.
-
-    Kept in models.py so workers can receive it if needed; but currently
-    most flags are handled in the main process (resolver/writer).
-    """
-
-    keep_docstrings: bool = True
-    strip_comments: bool = False
-    keep_comments: bool = True
-    allow_syntax_errors: bool = False
-    rename_strategy: str = "prefix"  # prefix|suffix|module_path|error
-    dedupe: str = "safe"  # none|safe|aggressive
-    imports_mode: str = "prune"  # prune|keep|strict
-    all_mode: str = "ignore"  # ignore|respect|merge|recompute
-    namespace: bool = False
-    preserve_modules: bool = False
-    source_map: bool = False
-    entry_keep_all: bool = False
-    main_name: str | None = None
-    generate_guard: bool = False

@@ -1,12 +1,19 @@
 Metadata-Version: 2.4
 Name: refactor_utils
-Version: 1.4.8
+Version: 2.0.0
 Summary: Consolidate a small/medium Python module, library or project into a single, dependency-ordered file.
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: loguru
 Requires-Dist: tree-sitter
 Requires-Dist: tree_sitter_python
+Provides-Extra: format
+Requires-Dist: black; extra == "format"
+Provides-Extra: progress
+Requires-Dist: tqdm; extra == "progress"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
 
 # refactor_utils
 

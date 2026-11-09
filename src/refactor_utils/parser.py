@@ -41,6 +41,7 @@ _COMPOUND = {
 _IMPORT_TYPES = {"import_statement", "import_from_statement", "future_import_statement"}
 _DEF_TYPES = {"function_definition", "class_definition", "decorated_definition"}
 _STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
+_ALL_METHODS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse"}
 # Dynamic & metaprogramming detection patterns
 _DYNAMIC_PATTERNS = {
     "importlib": re.compile(r"\bimportlib\b"),
@@ -75,7 +76,9 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
     return ".".join(base + ([rest] if rest else []))
 
 
-def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
+def parse_import(
+    node: Node, module: str, is_pkg: bool, type_checking: bool = False
+) -> list[ImportSpec]:
     specs: list[ImportSpec] = []
     if node.type == "import_statement":
         for ch in node.children_by_field_name("name"):
@@ -84,10 +87,11 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
                     ImportSpec(
                         _t(ch.child_by_field_name("name")),
                         alias=_t(ch.child_by_field_name("alias")),
+                        type_checking=type_checking,
                     )
                 )
             else:
-                specs.append(ImportSpec(_t(ch)))
+                specs.append(ImportSpec(_t(ch), type_checking=type_checking))
         return specs
     relative = False
     mod_node = node.child_by_field_name("module_name")
@@ -104,7 +108,11 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
     else:
         mod = _t(mod_node)
     if any(c.type == "wildcard_import" for c in node.children):
-        return [ImportSpec(mod, is_from=True, star=True, relative=relative)]
+        return [
+            ImportSpec(
+                mod, is_from=True, star=True, relative=relative, type_checking=type_checking
+            )
+        ]
     for ch in node.children_by_field_name("name"):
         if ch.type == "aliased_import":
             name = _t(ch.child_by_field_name("name"))
@@ -112,7 +120,14 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
         else:
             name, alias = _t(ch), None
         specs.append(
-            ImportSpec(mod, name=name, alias=alias, is_from=True, relative=relative)
+            ImportSpec(
+                mod,
+                name=name,
+                alias=alias,
+                is_from=True,
+                relative=relative,
+                type_checking=type_checking,
+            )
         )
     return specs
 
@@ -282,6 +297,47 @@ def _extent(node: Node) -> tuple[int, int]:
     return start, end
 
 
+def _dedent_block(raw: bytes, cut: int):
+    """Strip ``cut`` columns of indentation, returning text and an offset mapper.
+
+    Used when flattening a nested block (e.g. the body of ``if TYPE_CHECKING:``)
+    so emitted code starts at column zero without losing internal indentation.
+    The mapper re-bases byte offsets so occurrence edits stay valid.
+    """
+    if cut <= 0:
+        return raw, (lambda off: off)
+    lines = raw.split(b"\n")
+    stripped_lines = []
+    removed: list[int] = []
+    for line in lines:
+        strip = 0
+        while strip < cut and line[strip : strip + 1] == b" ":
+            strip += 1
+        removed.append(strip)
+        stripped_lines.append(line[strip:])
+    starts_old: list[int] = []
+    starts_new: list[int] = []
+    old_pos = new_pos = 0
+    for line, strip_, kept in zip(lines, removed, stripped_lines):
+        starts_old.append(old_pos)
+        starts_new.append(new_pos)
+        old_pos += len(line) + 1
+        new_pos += len(kept) + 1
+
+    def remap(offset: int) -> int:
+        lo, hi = 0, len(starts_old) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if starts_old[mid] <= offset:
+                lo = mid
+            else:
+                hi = mid - 1
+        rel = offset - starts_old[lo]
+        return starts_new[lo] + max(0, rel - removed[lo])
+
+    return b"\n".join(stripped_lines), remap
+
+
 def _first_error_line(root: Node) -> int:
     stack = [root]
     while stack:
@@ -402,7 +458,6 @@ def _collect_occs(
                     f"{info.module}: uses __file__, which now points at the consolidated file"
                 )
                 warned_file = True
-            # Additional runtime semantics warnings handled via _detect_runtime_semantics on full text
             occs.append(
                 Occ(
                     node.start_byte - base, node.end_byte - base, name, "name", not lazy
@@ -505,6 +560,49 @@ def _collect_occs(
     return occs
 
 
+def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
+    """Record a module-level ``__all__`` statement; return True if consumed.
+
+    Handles ``__all__ = [...]``, ``__all__: list[str] = [...]``,
+    ``__all__ += [...]`` and ``__all__.append(...)``.  A ``__all__`` binding is
+    never emitted as a constant: the consolidated file gets one recomputed
+    ``__all__`` (in ``__init__.py``), so the original is only used as a hint.
+    """
+    if node.type != "expression_statement" or not node.named_children:
+        return False
+    e = node.named_children[0]
+    names: list[str] | None = None
+    if e.type in ("assignment", "augmented_assignment"):
+        names = _target_names(e)
+        if names == ["__all__"]:
+            info.declared_all = (info.declared_all or []) + _STR_RE.findall(
+                _t(e.child_by_field_name("right"))
+            )
+            return True
+        return False
+    if e.type == "call":
+        fn = e.child_by_field_name("function")
+        if fn is not None and fn.type == "attribute":
+            if _dotted(fn.child_by_field_name("object")) == "__all__":
+                method = _t(fn.child_by_field_name("attribute"))
+                if method in _ALL_METHODS:
+                    args = e.child_by_field_name("arguments")
+                    for arg in args.named_children if args is not None else ():
+                        if (
+                            arg.type == "argument_list"
+                        ):  # pragma: no cover - defensive
+                            continue
+                        info.declared_all = (info.declared_all or []) + _STR_RE.findall(
+                            _t(arg)
+                        )
+                    info.warnings.append(
+                        f"{info.module}: mutated __all__ ('{method}') — static analysis "
+                        "may be incomplete; exported names are recomputed from definitions"
+                    )
+                    return True
+    return False
+
+
 def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     info.future_annotations = any(
         n.type == "future_import_statement" and b"annotations" in n.text
@@ -512,14 +610,24 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     )
     by_name: dict[str, Block] = {}
 
-    def add(kind: str, names: list[str], node: Node, own: Node | None = None) -> None:
+    def add(
+        kind: str,
+        names: list[str],
+        node: Node,
+        own: Node | None = None,
+        dedent: bool = False,
+    ) -> None:
         start, end = _extent(node)
-        # Capture original location for source_map
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
         raw_source = src[start:end]
-        # Detect dynamic patterns per block but also aggregate at module level via full src later
         occs = _collect_occs(node, start, src, own, info)
+        if dedent:
+            cut = node.start_point[1]
+            raw_source, remap = _dedent_block(raw_source, cut)
+            for occ in occs:
+                occ.start = remap(occ.start)
+                occ.end = remap(occ.end)
         block = Block(
             info.module, kind, list(names), raw_source, occs, len(info.blocks)
         )
@@ -535,6 +643,46 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
         info.blocks.append(block)
         for n in names:
             by_name[n] = block
+
+    def add_type_checking(node: Node) -> None:
+        """Flatten an ``if TYPE_CHECKING:`` block into the module.
+
+        Imports become ordinary imports (merged with the head import section by
+        the resolver); constants, classes and functions defined there are
+        extracted as normal blocks.
+        """
+        body = node.child_by_field_name("consequence")
+        if body is None:
+            return
+        for ch in body.named_children:
+            if ch.type == "comment":
+                continue
+            if ch.type in _IMPORT_TYPES:
+                info.imports.extend(
+                    parse_import(ch, info.module, info.is_pkg, type_checking=True)
+                )
+            elif ch.type in _DEF_TYPES:
+                d = (
+                    ch.child_by_field_name("definition")
+                    if ch.type == "decorated_definition"
+                    else ch
+                )
+                kind = CLASS if d.type == "class_definition" else FUNC
+                add(kind, [_t(d.child_by_field_name("name"))], ch, own=d, dedent=True)
+            elif ch.type == "expression_statement":
+                if _collect_all_stmt(ch, info):
+                    continue
+                e = ch.named_children[0] if ch.named_children else None
+                if e is not None and e.type in ("assignment", "augmented_assignment"):
+                    names = _target_names(e)
+                    if names:
+                        add(CONST, names, ch, dedent=True)
+                        continue
+                add(MISC, [], ch, dedent=True)
+            elif ch.type == "pass_statement":
+                continue
+            else:
+                add(MISC, _bound_names(ch), ch, dedent=True)
 
     first = True
     for n in root.named_children:
@@ -556,19 +704,10 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             e = n.named_children[0] if n.named_children else None
             if e is None or (is_first and e.type == "string"):
                 continue
+            if _collect_all_stmt(n, info):
+                continue
             if e.type in ("assignment", "augmented_assignment"):
                 names = _target_names(e)
-                if names == ["__all__"]:
-                    info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                        _t(e.child_by_field_name("right"))
-                    )
-                    continue
-                # Warn on computed/mutated __all__
-                if names and any(n.startswith("__all__") for n in names):
-                    # e.g., __all__ += [...], __all__.append(...)
-                    info.warnings.append(
-                        f"{info.module}: computed or mutated __all__ — static analysis may be incomplete"
-                    )
                 if names:
                     add(CONST, names, n)
                     continue
@@ -582,12 +721,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     add(MAIN, [], n)
                     continue
                 if cond in _TC_NAMES:
-                    body = n.child_by_field_name("consequence")
-                    for ch in body.named_children if body is not None else []:
-                        if ch.type in _IMPORT_TYPES:
-                            info.imports.extend(
-                                parse_import(ch, info.module, info.is_pkg)
-                            )
+                    add_type_checking(n)
                     continue
                 # Detect conditional/platform/optional imports
                 if (
@@ -599,7 +733,11 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                         f"{info.module}: conditional import guarded by '{cond.strip()}' kept verbatim"
                     )
             imports, has_def = _scan(n)
-            if imports and not has_def:
+            is_try_guard = imports and not has_def and t in (
+                "if_statement",
+                "try_statement",
+            )
+            if is_try_guard:
                 start, end = _extent(n)
                 specs = [
                     s
@@ -607,9 +745,19 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     for s in parse_import(imp, info.module, info.is_pkg)
                 ]
                 info.guards.append(
-                    GuardBlock(src[start:end].decode("utf-8", "replace"), specs)
+                    GuardBlock(
+                        src[start:end].decode("utf-8", "replace"),
+                        specs,
+                        _bound_names(n),
+                        conditional=True,
+                    )
                 )
             else:
+                info.warnings.append(
+                    f"{info.module}: module-level {t.replace('_statement', '')} "
+                    f"block combines imports and definitions — emitted verbatim, "
+                    "names bound there are not rewritten"
+                )
                 add(MISC, _bound_names(n), n)
         elif t == "pass_statement":
             continue
@@ -619,8 +767,6 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     full_text = src.decode("utf-8", "replace")
     _detect_dynamic_patterns(full_text, info)
     _detect_runtime_semantics(full_text, info)
-    # Additional edge: walrus, match, global/nonlocal are handled via scoping in _collect_occs (lazy, shadow)
-    # Comprehensions, lambdas already handled via lazy propagation
 
 
 def parse_module_file(
@@ -630,7 +776,6 @@ def parse_module_file(
     keep_docstrings: bool = True,
     strip_comments: bool = False,
     keep_comments: bool = True,
-    allow_syntax_errors: bool = False,
 ) -> ModuleInfo:
     info = ModuleInfo(module=module, path=path_str, is_pkg=is_pkg)
     try:
@@ -640,10 +785,7 @@ def parse_module_file(
         return info
     if src.startswith(b"\xef\xbb\xbf"):
         src = src[3:]
-    # Handle encoding/BOM/CRLF/tabs/shebang/encoding cookies
-    # BOM already stripped; detect encoding cookie (PEP 263) but we read as bytes and decode as utf-8 replace
-    # CRLF normalization is handled during rendering; keep original for fidelity
-    # Check for non-UTF8: if decode fails, log warning but continue with replace
+    # BOM stripped above; files are decoded as utf-8 with replacement below.
     try:
         text_probe = src.decode("utf-8")
         if "\r" in text_probe:
@@ -658,35 +800,9 @@ def parse_module_file(
         root = _get_parser().parse(src).root_node
         if root.has_error:
             err_line = _first_error_line(root)
-            msg = f"{path_str}: syntax error near line {err_line}"
-            if allow_syntax_errors:
-                info.warnings.append(
-                    msg + " — attempting partial parse (allow-syntax-errors)"
-                )
-                # Try to extract anyway; tree-sitter still produces partial tree
-                try:
-                    _extract(info, root, src)
-                    info.warnings.append(
-                        f"{path_str}: partial parse produced {len(info.blocks)} blocks"
-                    )
-                except Exception as exc:
-                    info.errors.append(
-                        f"{path_str}: extraction failed after syntax error: {exc!r}"
-                    )
-                # Apply post-processing even on partial parse
-                if not keep_docstrings:
-                    for b in info.blocks:
-                        b.source = _strip_docstring_from_source(b.source)
-                        b.stripped_docstring = True
-                if strip_comments or not keep_comments:
-                    for b in info.blocks:
-                        b.source = _strip_comments_from_source(b.source)
-                return info
-            else:
-                info.errors.append(msg)
-                return info
+            info.errors.append(f"{path_str}: syntax error near line {err_line}")
+            return info
         _extract(info, root, src)
-        # Post-process per flags
         if not keep_docstrings:
             for b in info.blocks:
                 b.source = _strip_docstring_from_source(b.source)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "refactor_utils"
-version = "1.4.8"
+version = "2.0.0"
 description = "Consolidate a small/medium Python module, library or project into a single, dependency-ordered file."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,10 +13,13 @@ dependencies = [
     "tree-sitter",
     "tree_sitter_python",
 ]
-# optional dependencies for --format and --progress
-# pip install refactor_utils[format] or [progress] if defined as extras (not yet)
 [project.scripts]
 pyrefactor = "refactor_utils.cli:main"
+
+[project.optional-dependencies]
+format = ["black"]
+progress = ["tqdm"]
+dev = ["pytest", "ruff"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -29,13 +32,9 @@ refactor_utils = ["data/*", "data/**/*"]
 exclude = ["tests/*", "test_*.py", "iwgfyrkugf.py"]
 include = []
 entry = []
-rename_strategy = "prefix"
-dedupe = "safe"
 imports = "prune"
-all = "ignore"
 format = false
-fail_on_warning = false
-max_skipped = 10
+copy_data = true
 
 [tool.black]
 line-length = 88
