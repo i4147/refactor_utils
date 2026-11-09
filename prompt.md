@@ -55,8 +55,6 @@ usage: pyrefactor [-h] [-o OUTPUT]
                   [--version]
                   source
 
-
-
 with above changes all modes will be merged in one (no need to -m flag)
 --validate-imports, --validate flags should be removed, validation is mandatory
 --allow-syntax-error, --max-dkipped, --source-map, --preserve-module,--all,--respect-all,--no-parallel,--no-copy-data flags should be removed
