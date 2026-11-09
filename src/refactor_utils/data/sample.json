@@ -1,0 +1,6 @@
+{
+  "project": "refactor_utils",
+  "description": "Example data file that should be preserved during consolidation",
+  "version": "1.4.8",
+  "features": ["consolidation", "data-preservation", "source-maps"]
+}

@@ -1,0 +1,2 @@
+[console_scripts]
+pyrefactor = refactor_utils.cli:main
