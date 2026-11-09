@@ -13,6 +13,7 @@ credential.json
 out/
 output/
 simz.json
+*.exe
 .bash_secrets
 .github_token
 .git_token

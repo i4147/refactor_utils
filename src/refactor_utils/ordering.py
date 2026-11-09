@@ -15,7 +15,10 @@ def topo_order(
     key: Callable[[Block], tuple],
 ) -> list[Block]:
     by_id = {b.bid: b for b in nodes}
-    pending = {b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid} for b in nodes}
+    pending = {
+        b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid}
+        for b in nodes
+    }
     dependents: dict[int, list[int]] = defaultdict(list)
     for bid, ds in pending.items():
         for d in ds:
@@ -41,7 +44,9 @@ def topo_order(
                 (i for i in pending if i not in done and i not in queued),
                 key=lambda i: (len(pending[i]), rank(by_id[i]), key(by_id[i])),
             )
-            blocked = ", ".join(sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand]))
+            blocked = ", ".join(
+                sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand])
+            )
             logger.warning(
                 "Circular import-time dependency: emitting {} ({}) before {}",
                 by_id[cand].primary or f"<{by_id[cand].kind}>",

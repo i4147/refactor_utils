@@ -100,6 +100,7 @@ class SourceFile:
 @dataclass(frozen=True)
 class DataFile:
     """Non-Python data file discovered alongside the source tree."""
+
     path: "object"
     relative: str  # relative to source base, for output placement
     kind: str = "data"
@@ -112,6 +113,7 @@ class ConsolidationOptions:
     Kept in models.py so workers can receive it if needed; but currently
     most flags are handled in the main process (resolver/writer).
     """
+
     keep_docstrings: bool = True
     strip_comments: bool = False
     keep_comments: bool = True
