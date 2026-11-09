@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Callable, Mapping, Sequence
 from loguru import logger
 from .models import Block
+from .imports import sort_key
 
 
 def topo_order(
@@ -19,6 +20,11 @@ def topo_order(
         b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid}
         for b in nodes
     }
+    # Tie-break equal (rank, key) entries by the first name, where names starting
+    # with ``_`` sort before alphanumeric ones, then by block id for stability.
+    name_key = {
+        b.bid: (sort_key(b.primary) if b.primary else (1, "", ""), b.bid) for b in nodes
+    }
     dependents: dict[int, list[int]] = defaultdict(list)
     for bid, ds in pending.items():
         for d in ds:
@@ -30,7 +36,7 @@ def topo_order(
 
     def push(bid: int) -> None:
         b = by_id[bid]
-        heapq.heappush(heaps[rank(b)], (key(b), bid))
+        heapq.heappush(heaps[rank(b)], (key(b), name_key[bid], bid))
         queued.add(bid)
 
     for bid, ds in pending.items():
@@ -42,7 +48,12 @@ def topo_order(
         if not ranks:
             cand = min(
                 (i for i in pending if i not in done and i not in queued),
-                key=lambda i: (len(pending[i]), rank(by_id[i]), key(by_id[i])),
+                key=lambda i: (
+                    len(pending[i]),
+                    rank(by_id[i]),
+                    key(by_id[i]),
+                    name_key[i],
+                ),
             )
             blocked = ", ".join(
                 sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand])
@@ -57,7 +68,7 @@ def topo_order(
             continue
         r = cur if heaps[cur] else min(ranks)
         cur = r
-        _, bid = heapq.heappop(heaps[r])
+        bid = heapq.heappop(heaps[r])[-1]
         done.add(bid)
         out.append(by_id[bid])
         for dep in dependents[bid]:

@@ -23,10 +23,25 @@ def _group(module: str) -> int:
     return 0 if module.split(".")[0] in _STDLIB else 1
 
 
+def sort_key(name: str) -> tuple:
+    """Sort key where names starting with ``_`` come before alphanumerics.
+
+    Among themselves, underscore names keep plain alphabetical order; the rest
+    are compared case-insensitively (``CONST`` before ``Class`` before ``call``)
+    for stable, readable output.
+    """
+    stripped = name.lstrip("_")
+    return (0 if name.startswith("_") else 1, stripped.lower(), name)
+
+
 def _item_key(item: str) -> tuple:
-    base = item.split(" as ")[0]
-    kind = 0 if (base.isupper() and len(base) > 1) else 1 if base[:1].isupper() else 2
-    return (kind, base.lower(), item)
+    """Sort imported names: ``_private`` first, then plain alphabetical.
+
+    A plain case-insensitive comparison is used on purpose: mixing CONSTANTS,
+    Classes and functions into one alphabetical list reads better than the
+    usual PEP 8 grouping inside a generated file.
+    """
+    return sort_key(item.split(" as ")[0])
 
 
 def _wrap(module: str, items: list[str]) -> str:
@@ -35,6 +50,17 @@ def _wrap(module: str, items: list[str]) -> str:
         return line
     body = "".join(f"    {i},\n" for i in items)
     return f"from {module} import (\n{body})"
+
+
+def _dedupe_aliases(items: set[str]) -> set[str]:
+    """Drop ``from m import x`` when ``from m import x as x`` (same name) is kept."""
+    plain = {i for i in items if " as " not in i}
+    aliased = {i for i in items if " as " in i}
+    # ``from m import x`` and ``from m import x as x`` bind the same local name.
+    return {
+        i if i.split(" as ", 1)[1] != i.split(" as ", 1)[0] else i.split(" as ", 1)[0]
+        for i in aliased
+    } | plain
 
 
 def future_section(names: Iterable[str]) -> str:
@@ -71,6 +97,7 @@ def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) 
             if "*" in items:
                 lines.append(f"from {mod} import *")
                 items = items - {"*"}
+            items = _dedupe_aliases(items)
             if items:
                 lines.append(_wrap(mod, sorted(items, key=_item_key)))
         if lines:

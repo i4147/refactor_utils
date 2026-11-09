@@ -22,3 +22,4 @@ src/refactor_utils/data/README.md
 src/refactor_utils/data/config.ini
 src/refactor_utils/data/example.csv
 src/refactor_utils/data/sample.json
+tests/test_consolidate.py
