@@ -1,16 +1,24 @@
 """Merge, de-duplicate, sort and render the import section."""
 
-from __future__ import annotations
 import sys
 from collections import defaultdict
 from typing import Iterable, Mapping
-from .models import ImportSpec
+from .models import ImportSpec, dotted_sort_key, ident_sort_key
 
 _STDLIB = getattr(sys, "stdlib_module_names", frozenset())
 _LINE = 88
 
 
 def render_import_line(spec: ImportSpec) -> str:
+    """Render a single import specification as source text.
+
+    Args:
+        spec: The import to render.
+
+    Returns:
+        A one-line ``import``/``from ... import ...`` statement.
+
+    """
     if spec.star:
         return f"from {spec.module} import *"
     if not spec.is_from:
@@ -20,16 +28,50 @@ def render_import_line(spec: ImportSpec) -> str:
 
 
 def _group(module: str) -> int:
+    """Classify a module for import grouping.
+
+    Args:
+        module: Dotted module name.
+
+    Returns:
+        ``0`` for the standard library, ``1`` for everything else.
+
+    """
     return 0 if module.split(".")[0] in _STDLIB else 1
 
 
 def _item_key(item: str) -> tuple:
-    base = item.split(" as ")[0]
-    kind = 0 if (base.isupper() and len(base) > 1) else 1 if base[:1].isupper() else 2
-    return (kind, base.lower(), item)
+    """Build a sort key that orders constants, classes and functions.
+
+    Within each category (constants, classes, functions), names starting with
+    ``_`` precede names starting with normal alphabetic characters.
+
+    Args:
+        item: Rendered import item, optionally with an ``as`` alias.
+
+    Returns:
+        Sort key tuple.
+
+    """
+    parts = item.split(" as ", 1)
+    base = parts[0]
+    alias = parts[1] if len(parts) > 1 else ""
+    core = base.strip("_")
+    kind = 0 if (core.isupper() and len(core) > 1) else 1 if core[:1].isupper() else 2
+    return (kind, ident_sort_key(base), ident_sort_key(alias))
 
 
 def _wrap(module: str, items: list[str]) -> str:
+    """Render a ``from`` import, wrapping it in parentheses when too long.
+
+    Args:
+        module: Module the names are imported from.
+        items: Already rendered import items.
+
+    Returns:
+        A single line, or a parenthesized multi-line import.
+
+    """
     line = f"from {module} import {', '.join(items)}"
     if len(line) <= _LINE:
         return line
@@ -38,11 +80,31 @@ def _wrap(module: str, items: list[str]) -> str:
 
 
 def future_section(names: Iterable[str]) -> str:
-    names = sorted(set(names))
-    return f"from __future__ import {', '.join(names)}" if names else ""
+    """Render the ``from __future__ import ...`` line.
+
+    Args:
+        names: Feature names to enable.
+
+    Returns:
+        The import line, or an empty string when ``names`` is empty.
+
+    """
+    ordered = sorted(set(names), key=ident_sort_key)
+    return f"from __future__ import {', '.join(ordered)}" if ordered else ""
 
 
 def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) -> str:
+    """Merge external imports into a grouped, deduplicated import section.
+
+    Args:
+        keys: External import keys to emit.
+        ext_final: Mapping of import key to the alias it must use after
+            conflict resolution.
+
+    Returns:
+        The rendered import block, standard library first.
+
+    """
     plain: dict[int, set[tuple[str, str | None]]] = defaultdict(set)
     froms: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for key in keys:
@@ -62,11 +124,13 @@ def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) 
         lines: list[str] = []
         entries = plain.get(grp, set())
         dotted_tops = {m.split(".")[0] for m, a in entries if a is None and "." in m}
-        for mod, alias in sorted(entries, key=lambda e: (e[0].lower(), e[1] or "")):
+        for mod, alias in sorted(
+            entries, key=lambda e: (dotted_sort_key(e[0]), ident_sort_key(e[1] or ""))
+        ):
             if alias is None and "." not in mod and mod in dotted_tops:
                 continue
             lines.append(f"import {mod}" + (f" as {alias}" if alias else ""))
-        for mod in sorted(froms.get(grp, {}), key=str.lower):
+        for mod in sorted(froms.get(grp, {}), key=dotted_sort_key):
             items = froms[grp][mod]
             if "*" in items:
                 lines.append(f"from {mod} import *")
