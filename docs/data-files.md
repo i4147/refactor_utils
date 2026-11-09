@@ -49,11 +49,16 @@ If the project had no data files, returns `[]` (no-op).
 
 ```python
 for df in data_files:
-    dest = output / df.relative  # single/flat/split: output/data.json
-    # package mode: output/<pkg>/data.json
+    relative = df.path.relative_to(source_dir)   # package-relative
+    dest = out_dir / relative                    # consolidated/data/config.json
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(df.path, dest)  # preserves mtime
+    shutil.copy2(df.path, dest)                  # preserves mtime
 ```
+
+`consolidate_package()` always uses paths relative to the **package**
+directory, so a module that does
+`Path(__file__).parent / "data" / "config.json"` keeps working after
+consolidation (`__file__` is now `consolidated/<pkgname>.py`).
 
 Filtered by `--data-glob` (repeatable) via `fnmatch`:
 
@@ -74,11 +79,10 @@ source/
       config.json
     settings.ini
 
-output/
-  __init__.py
-  _consolidated.py
-  pkg/
-    data/config.json      # preserved path
+pkg/
+  consolidated/
+    pkg.py
+    data/config.json      # package-relative path preserved
     settings.ini
 ```
 
@@ -86,7 +90,7 @@ From repo's own `src/refactor_utils/data/`:
 
 ```bash
 pyrefactor src/refactor_utils -o /tmp/out --copy-data --validate
-ls /tmp/out/refactor_utils/data/
+ls /tmp/out/data/
 # README.md  config.ini  example.csv  sample.json
 ```
 

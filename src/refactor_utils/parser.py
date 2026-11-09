@@ -72,6 +72,7 @@ _DYNAMIC_PATTERNS = {
 
 
 def _get_parser() -> Parser:
+    """Return the process-local tree-sitter parser, creating it once."""
     parser = getattr(_LOCAL, "parser", None)
     if parser is None:
         parser = Parser(Language(_tspy.language()))
@@ -80,10 +81,12 @@ def _get_parser() -> Parser:
 
 
 def _t(node: Node | None) -> str:
+    """Return the decoded text of a tree-sitter node (``""`` for None)."""
     return node.text.decode("utf-8", "replace") if node is not None else ""
 
 
 def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
+    """Resolve a relative import to an absolute dotted module name."""
     parts = current.split(".") if is_pkg else current.split(".")[:-1]
     strip = level - 1
     base = [] if strip > len(parts) else parts[: len(parts) - strip]
@@ -148,6 +151,7 @@ def parse_import(node: Node, module: str, is_pkg: bool) -> list[ImportSpec]:
 
 
 def _dotted(node: Node | None) -> str | None:
+    """Return the dotted name of an identifier/attribute node, or None."""
     if node is None:
         return None
     if node.type == "identifier":
@@ -299,6 +303,7 @@ def _comprehension_bindings(node: Node) -> set[str]:
 
 
 def _param_names(params: Node | None) -> set[str]:
+    """Return the parameter names declared by ``params``."""
     names: set[str] = set()
     if params is not None:
         for ch in params.named_children:
@@ -408,6 +413,7 @@ def _function_shadow(
 def _push_param_exprs(
     stack: list, params: Node | None, lazy: bool, shadow: frozenset[str]
 ) -> None:
+    """Push the annotations and default values of ``params`` onto the dependency stack."""
     if params is None:
         return
     for ch in params.named_children:
@@ -423,6 +429,7 @@ def _push_param_exprs(
 
 
 def _lhs_names(node: Node | None) -> list[str] | None:
+    """Return the names bound by an assignment target, or None when the target is not a plain name/pattern."""
     if node is None:
         return None
     t = node.type
@@ -442,6 +449,7 @@ def _lhs_names(node: Node | None) -> list[str] | None:
 
 
 def _target_names(assign: Node) -> list[str] | None:
+    """Return the names bound by a (possibly chained) assignment."""
     names: list[str] = []
     cur: Node | None = assign
     while cur is not None and cur.type in ("assignment", "augmented_assignment"):
@@ -454,6 +462,7 @@ def _target_names(assign: Node) -> list[str] | None:
 
 
 def _first_identifier(node: Node) -> str:
+    """Return the first identifier found in ``node`` (best effort)."""
     stack = [node]
     while stack:
         cur = stack.pop()
@@ -528,6 +537,7 @@ def _compound_defs(node: Node) -> tuple[list[str], dict[str, str], bool]:
 
 
 def _bound_names(node: Node) -> list[str]:
+    """Return the module-scope names bound by a compound statement."""
     names, _, _ = _compound_defs(node)
     return names
 
@@ -547,6 +557,7 @@ def _scan_module_imports(node: Node) -> list[Node]:
 
 
 def _scan(node: Node) -> tuple[list[Node], bool]:
+    """Collect the imports and ``def``/``class`` presence of a subtree."""
     imports: list[Node] = []
     has_def = False
     stack = [node]
@@ -563,6 +574,7 @@ def _scan(node: Node) -> tuple[list[Node], bool]:
 
 
 def _extent(node: Node) -> tuple[int, int]:
+    """Return the byte range of a node plus its attached comments."""
     start, end = node.start_byte, node.end_byte
     row = node.start_point[0]
     prev = node.prev_sibling
@@ -583,6 +595,7 @@ def _extent(node: Node) -> tuple[int, int]:
 
 
 def _first_error_line(root: Node) -> int:
+    """Return the 1-based line of the first syntax error, or 0."""
     stack = [root]
     while stack:
         cur = stack.pop()

@@ -4,6 +4,11 @@ site_url: https://github.com/i4147/refactor_utils
 repo_url: https://github.com/i4147/refactor_utils
 repo_name: i4147/refactor_utils
 
+# docs/README.md documents how to build this site; it is not a site page and
+# would otherwise clash with docs/index.md (both map to the site root).
+exclude_docs: |
+  README.md
+
 theme:
   name: material
   palette:

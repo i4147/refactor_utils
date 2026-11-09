@@ -1,8 +1,34 @@
-# Output Modes
+# Output Layouts
 
-`--mode` controls layout; `single` (default) is backward-compatible.
+## CLI layout: `consolidated/<pkgname>.py` (only layout of `pyrefactor`)
 
-## `single` (default)
+```bash
+pyrefactor src/mypackage
+```
+
+```
+src/mypackage/
+  consolidated/
+    mypackage.py     # the single generated module
+```
+
+`mypackage.py` contains (in order) the module docstring, `__future__` and
+optimized imports, constants, classes, functions, entry points/guards and the
+`autoall`-generated `__all__` section. The output directory always holds
+exactly one file: temporary `const.py`/`classes.py`/`func.py` extraction files
+are removed after the merge, and files from the legacy `output/` layout are
+cleaned up when the directory is called `consolidated/` or `output/`.
+
+`core.consolidate_package()` implements this layout;
+`writer.render_consolidated_single()` renders the body and
+`autoall.ensure_all_file()` appends `__all__` in place.
+
+## Library layouts: `core.consolidate(mode=...)`
+
+The older, lower-level API still supports five layouts. They are not reachable
+from the CLI, which keeps `pyrefactor` to a single, predictable output.
+
+### `single` (default of `consolidate()`)
 
 ```
 output/
@@ -12,7 +38,7 @@ output/
 
 `core.py` calls `writer.render_consolidated()` + `render_init()`.
 
-## `package`
+### `package`
 
 ```
 output/<pkg>/
@@ -23,7 +49,7 @@ output/<pkg>/
 
 Uses `render_package()`; package name derived from source dirname/stem.
 
-## `module`
+### `module`
 
 Single file, no `__init__.py`:
 
@@ -31,9 +57,9 @@ Single file, no `__init__.py`:
 output/_consolidated.py  # or output (if path ends with .py, that file)
 ```
 
-`render_module()`; `--stdout` similar.
+`render_module()`; `--stdout` gives the same text on stdout.
 
-## `flat`
+### `flat`
 
 No section headers, minimal spacing:
 
@@ -47,7 +73,7 @@ class Bar: ...
 
 `render_flat()`; still includes `__init__.py` for compatibility.
 
-## `split`
+### `split`
 
 By kind:
 
@@ -60,14 +86,13 @@ output/
   __init__.py
 ```
 
-`render_split()` returns dict `fname → content`.
+`render_split()` returns a dict `fname → content`.
 
-## Choosing a Mode
+## Choosing a layout
 
-- **Library** for publishing: `single` (standard).
-- **Package** installable: `package`.
-- **Script**: `module` + `--stdout`.
-- **Debugging**: `flat`.
-- **Large project** split by kind: `split`.
+- **CLI / publishing a module**: the default `consolidated/<pkgname>.py`.
+- **Library users that need the old multi-file tree**: `consolidate(mode=...)`
+  with `single`, `package`, `module`, `flat` or `split`.
 
-All modes compile (`compile(..., "exec")`) and copy data files under the output root (or package dir).
+All layouts compile (`compile(..., "exec")`) and copy data files under the
+output root (or package dir).

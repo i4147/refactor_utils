@@ -2,7 +2,7 @@
 
 **Consolidate a small/medium Python module, library or project into one dependency-ordered file.**
 
-`pyrefactor` parses every file with **tree-sitter** (parallel workers), orders blocks by import-time dependencies, resolves collisions, merges imports, and emits a single `consolidated/<pkgname>.py` file — with full support for data files, source maps, and the legacy multi-file layouts.
+`pyrefactor` parses every file with **tree-sitter** (parallel workers), orders blocks by import-time dependencies, resolves collisions, merges imports, and emits a single `consolidated/<pkgname>.py` file — with full support for data files and source maps. (The older multi-file layouts remain available through the library API.)
 
 ```bash
 pip install -e .
@@ -53,7 +53,7 @@ The package name (`<pkgname>`) is detected from `pyproject.toml`/`setup.cfg`/`se
 | Diff | `--diff` | off |
 | Overwrite | `--overwrite` / `--force` | warn |
 | Include vs exclude | `--include GLOB` / `--exclude GLOB` | precedence: default < include < exclude |
-| Data files | `--copy-data` / `--data-glob` | on |
+| Data files | `--copy-data` / `--data-glob` | off |
 | Docstrings/comments | `--strip-docstrings` / `--strip-comments` | keep |
 | Collisions | `--rename-strategy prefix|sufix|module_path|error` | prefix |
 | Dedupe | `--dedupe none|safe|aggressive` | safe |
@@ -64,7 +64,6 @@ The package name (`<pkgname>`) is detected from `pyproject.toml`/`setup.cfg`/`se
 | Strictness | `--fail-on-warning` / `--max-skipped` / `--allow-syntax-errors` | off |
 | Parallelism | `--workers` / `--jobs` / `--no-parallel` / `--progress` | cpu count |
 | Validation | `--validate` / `--validate-import` | off |
-| Modes | `--mode single|package|module|flat|split` | single |
 
 ## License
 

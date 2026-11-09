@@ -5,7 +5,7 @@ Every file in `src/refactor_utils/` and top-level.
 ## `pyproject.toml`
 
 - `[build-system]` setuptools.
-- `[project]` name `refactor_utils`, version `1.4.8`, deps `loguru`, `tree-sitter`, `tree_sitter_python`; optional `[format]`, `[progress]`, `[test]`, `[docs]`, entry point `pyrefactor = refactor_utils.cli:main`.
+- `[project]` name `refactor_utils`, version `1.5.0`, deps `loguru`, `tree-sitter`, `tree_sitter_python`; optional `[format]`, `[progress]`, `[test]`, `[docs]`, entry point `pyrefactor = refactor_utils.cli:main`.
 - `[tool.setuptools]` where=`src`, package-data `data/*`.
 - `[tool.pyrefactor]` default config for this repo (exclude `tests/*`, `iwgfyrkugf.py`).
 - `[tool.pytest]` `testpaths = ["tests"]`, `pythonpath = ["src"]`.
@@ -13,15 +13,38 @@ Every file in `src/refactor_utils/` and top-level.
 
 ## `src/refactor_utils/__init__.py`
 
-Public API: re-exports `ConsolidationError`, `ConsolidationResult`, `consolidate` from `core.py`, plus `__version__`.
+Public API: re-exports `ConsolidationError`, `ConsolidationResult`, `consolidate` and `consolidate_package` from `core.py`, plus `__version__` (1.5.0).
 
 ## `src/refactor_utils/cli.py`
 
-`build_parser()` defines all flags with help referencing module; `main()` resolves aliases (`--jobs`→`--workers`, `--progress-bar`, `--keep-all-mains`, `--post-format`), calls `consolidate()`, handles `ConsolidationError` (exit 2), `dry-run`/`check` reporting, `skipped`/`fail-on-warning`/`validate` exit codes.
+`build_parser()` defines all flags with help referencing the module that
+implements them. `apply_config(args, parser)` merges `[tool.pyrefactor]`
+(explicit `--config` or auto-detected via
+`discovery.detect_pyproject_config()`); a flag that differs from its argparse
+default is treated as explicit and wins. `main()` resolves aliases
+(`--jobs`→`--workers`, `--progress-bar`, `--keep-all-mains`,
+`--post-format`), calls `consolidate_package()`, and maps failures to exit
+codes (`ConsolidationError` → 2, unexpected → 1). `_read_tool_config(path)`
+parses an explicit TOML file.
 
 ## `src/refactor_utils/core.py`
 
-Orchestrates `discover → _parse_all (parallel) → Resolver → writer`. Key: `_parse_worker` (picklable), `_parse_all` (Process/Thread pool with BrokenExecutor fallback, tqdm), `_load_config_file`, `ConsolidationResult` (adds `warnings`, `diff`, `stdout_text`, `copied_data_files`, `validated`, `dry_run`, `plan`), `consolidate()` (handles every flag, modes `single|package|module|flat|split`, data copy via `shutil.copy2`, diff, validate).
+Orchestrates `discover → _parse_all (parallel) → Resolver → writer`.
+
+- `_parse_worker` (picklable), `_parse_all` (Process/Thread pool with
+  BrokenExecutor fallback, tqdm).
+- `ConsolidationResult` (fields: `output_dir`, `files`, `modules`, `skipped`,
+  `exports`, `warnings`, `diff`, `stdout_text`, `copied_data_files`,
+  `validated`, `dry_run`, `plan`, `all_added`, `pkg_name`).
+- `consolidate_package(source=".", output=None, **options)` — the
+  `pyrefactor [pkg]` contract (see [Quickstart](quickstart.md)): package-name
+  detection, `consolidated/<pkgname>.py` output, temporary
+  `const.py`/`classes.py`/`func.py` extraction (`_write_section_files`,
+  `_merge_body`), `__all__` added in place by `autoall` (`_render_final`),
+  stale-output cleanup (`_cleanup_stale_outputs`), `--diff` (`_unified_diff`)
+  and optional formatting (`writer.format_source`).
+- `consolidate(...)` — the lower-level multi-layout API
+  (`mode="single"|"package"|"module"|"flat"|"split"`) kept for library users.
 
 ## `src/refactor_utils/discovery.py`
 
@@ -34,6 +57,13 @@ Orchestrates `discover → _parse_all (parallel) → Resolver → writer`. Key: 
 - `discover()` — returns `list[SourceFile(path, module, is_pkg)]` with `detect_base` and `relative_to(base)`, handles single-file, namespace (no `__init__.py`), output-inside-source skip.
 - `discover_data_files()` — non-py data discovery, respects same filters, returns `DataFile(path, relative)`.
 - `detect_pyproject_config()` — finds `pyproject.toml` upwards, loads `tomllib`/`tomli` `[tool.pyrefactor]`.
+- `normalize_pkg_name(name)` — turns a distribution/folder name into a valid
+  module name (`my-dist` → `my_dist`, leading digit prefixed with `_`).
+- `detect_pkg_name(root)` — reads `pyproject.toml`/`setup.cfg`/`setup.py` in
+  `root` and up to two levels above (covering `src/<pkgname>`), falling back
+  to the folder name; always returns a normalised identifier.
+- `discover_data_files(..., data_glob=())` — optional glob filter matched
+  against the file name and its relative path.
 
 ## `src/refactor_utils/parser.py`
 
@@ -73,7 +103,9 @@ Cross-module `Resolver(modules, keep_unused_imports, respect_all, entry, workers
 
 ## `src/refactor_utils/writer.py`
 
-- `_sep` (spacing), `_format_with_black`/`_format_with_ruff`.
+- `_sep` (spacing), `_format_with_black`/`_format_with_ruff`,
+  `format_source(text, formatter)` (public wrapper used by
+  `consolidate_package(--format)`).
 - `render_consolidated(plan, source_name, namespace, preserve_modules, source_map, do_format, formatter)` — section headers `Constants/Classes/Functions/Entry points`, per-block prefix comments (`# Original module:`, `# source:`, `# namespace:`), formatting.
 - `render_init(plan, source_name, module)` — `from ._consolidated import (...)` + `__all__`.
 - `render_flat`, `render_split` (dict `const.py`/`class.py`/etc.), `render_package`, `render_module`.
@@ -109,9 +141,18 @@ Example data files demonstrating preservation:
 - `prompt.md` — original AI agent task (features/edge cases to implement).
 - `mkdocs.yml` — Material theme, nav, plugins (`search`, `mkdocstrings`).
 - `docs/` — see [Architecture](architecture.md); `docs/README.md` explains how to build the HTML docs and the single-file PDF.
-- `tests/` — pytest suite (discovery, parser, resolver, writer, cli, core, data, integration). Includes `tests/test_consolidated.py` for the `consolidated/<pkgname>.py` flow.
+- `tests/` — pytest suite (discovery, parser, resolver, writer, cli, core, data,
+  integration). `tests/test_consolidated.py` covers the
+  `consolidated/<pkgname>.py` flow, `tests/test_cli_workflow.py` drives the CLI
+  end to end (no-arg run, `--check`, config merge, exit codes) and
+  `tests/test_autoall.py` pins the in-place `__all__` behaviour.
 - `examples/` — runnable demos (basic, advanced, programmatic, data_files_example, config_example).
-- `arena/` — helper scripts (bash/python) used during this session.
+- `arena/` — helper scripts (bash/python) used during this session; see
+  `arena/README.md`. Includes the docstring audit, the PDF builder and the
+  repo-wide consolidation demos.
+- `refactor_utils.pdf` — generated single-file documentation PDF (see
+  `docs/README.md`).
+- `site/` — generated HTML documentation (git-ignored).
 - `.gitignore` — ignores `output/`, `output_*/`, `.venv/`, `__pycache__/`, etc.
 
 ## `src/refactor_utils/discovery.py` (additions)
@@ -148,3 +189,40 @@ Example data files demonstrating preservation:
   constants) and writes/updates an `__all__ = [...]` block between the
   `# --- auto-generated __all__ ---` markers inplace (atomically). Exported
   as `autoall.ensure_all_file`.
+
+## `autoall/` (vendored helper package)
+
+`autoall` is developed as a sibling package in `autoall/` and used by
+`pyrefactor` to write the `__all__` section:
+
+- `ensure_all(pkg_name, ...)` — package mode: parse the user part of
+  `__init__.py`, respect a user `__all__`, otherwise scan the directory and
+  write the block once.
+- `ensure_all_file(path, *, persist=True)` — **file mode used by
+  `pyrefactor`**: parse a single module with `ast`, collect public top-level
+  names and write/update the marker-delimited `__all__` block in place
+  (atomic replace, idempotent, CRLF preserving, user `__all__` respected).
+- `build_all_block(names)` — public helper returning the exact block text, so
+  `--check`/`--stdout` can show what will be written.
+- `install`/`uninstall`/`is_installed`/`regenerate` and the `autoall` CLI.
+
+## `arena/` (session helper scripts)
+
+| Script | Purpose |
+|--------|---------|
+| `setup.sh` | create the venv, install the project + test/docs deps |
+| `run_tests.sh` | run pytest (optionally with coverage) |
+| `check_all.sh` | tests + docstring audit + docs + PDF + demos |
+| `demo_consolidate.sh` | run `pyrefactor` over the example packages |
+| `test_on_packages.sh` | run `pyrefactor` over real packages (autoall, this repo, examples) and compile the result |
+| `verify_prompt.py` | assert the `prompt.md` contract (layout, temp files, `__all__`, ordering) |
+| `helpers.py` | small python helpers (make demo packages, validate output) |
+| `docstring_audit.py` | report missing module/class/function docstrings |
+| `add_docstrings.py` | libcst script that inserted the missing docstrings |
+| `build_docs.sh` | build the mkdocs HTML site |
+| `build_pdf.py` | build `refactor_utils.pdf` (fpdf2, no browser needed) |
+
+## Documentation build
+
+`docs/README.md` documents the two-step build (HTML site + single-file PDF),
+including the tools required and how to verify the result.

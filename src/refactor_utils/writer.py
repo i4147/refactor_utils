@@ -2,6 +2,8 @@
 
 Holds the layout-specific renderers (single, package, module, flat, split) plus
 the generated ``__init__.py`` that re-exports the public API.
+``render_consolidated_single`` and :func:`format_source` back the
+``consolidated/<pkgname>.py`` layout used by the ``pyrefactor`` CLI.
 """
 
 from pathlib import Path
@@ -65,6 +67,39 @@ def _format_with_ruff(text: str) -> str:
         return out
     except Exception:
         return text
+
+
+def format_source(text: str, formatter: str = "black") -> str:
+    """Format generated python source with an optional external formatter.
+
+    ``black`` is used when importable (``formatter="black"``), otherwise the
+    ``ruff format`` executable is tried; ``formatter="ruff"`` tries ruff first
+    and falls back to black. When neither tool is available the text is
+    returned unchanged, so callers never have to guard the call.
+
+    Args:
+        text: Generated python source.
+        formatter: Preferred formatter: ``"black"`` (default) or ``"ruff"``.
+
+    Returns:
+        The formatted source, or ``text`` when no formatter is available.
+    """
+    import importlib.util
+    import shutil
+
+    has_black = importlib.util.find_spec("black") is not None
+    has_ruff = shutil.which("ruff") is not None
+    order = ("ruff", "black") if formatter == "ruff" else ("black", "ruff")
+    for choice in order:
+        if choice == "black" and has_black:
+            out = _format_with_black(text)
+            if out != text or not has_ruff:
+                return out
+        elif choice == "ruff" and has_ruff:
+            out = _format_with_ruff(text)
+            if out != text or not has_black:
+                return out
+    return text
 
 
 def render_consolidated(

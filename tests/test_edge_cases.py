@@ -324,13 +324,26 @@ def test_unresolved_internal_import_is_kept_verbatim(tmp_path):
     """An import of a compiled extension survives instead of being dropped."""
     pkg = write_tree(
         tmp_path / "pkg",
-        {"a.py": "from . import _speedups\nX = 1\n"},
+        {"__init__.py": "", "a.py": "from . import _speedups\nX = 1\n"},
     )
     out = tmp_path / "out"
     result = consolidate(pkg, out)
     text = (out / "_consolidated.py").read_text()
-    assert "_speedups" in text
+    # The relative import is rewritten to an absolute one, which stays valid
+    # outside the package.
+    assert "from pkg import _speedups" in text
     assert any("kept verbatim" in warning for warning in result.warnings)
+
+
+def test_unresolved_relative_import_without_package_is_dropped(tmp_path):
+    """A relative import with no package prefix cannot be kept verbatim."""
+    pkg = write_tree(tmp_path / "pkg", {"a.py": "from . import _speedups\nX = 1\n"})
+    out = tmp_path / "out"
+    result = consolidate(pkg, out)
+    text = (out / "_consolidated.py").read_text()
+    assert "from  import" not in text
+    assert "_speedups" not in text
+    assert any("relative import dropped" in warning for warning in result.warnings)
 
 
 # ------------------------------------------------------------- 1.9 async main

@@ -1,7 +1,14 @@
-"""Find the python files of a project and derive their dotted module names."""
+"""Find the python files of a project and derive their dotted module names.
+
+Also owns package-name detection for the ``consolidated/<pkgname>.py`` layout
+(:func:`detect_pkg_name`/:func:`normalize_pkg_name`) and the optional
+``[tool.pyrefactor]`` configuration lookup
+(:func:`detect_pyproject_config`).
+"""
 
 import fnmatch
 import os
+import re
 from pathlib import Path
 from typing import Iterable
 from loguru import logger
@@ -155,6 +162,7 @@ def _is_excluded(
 
 
 def _is_data_file(path: Path) -> bool:
+    """Return ``True`` when ``path`` should be treated as a data file worth copying."""
     if path.suffix.lower() in DATA_EXTENSIONS:
         return True
     if path.name in DATA_FILENAMES:
@@ -173,6 +181,7 @@ def _walk(
     include: tuple[str, ...] = (),
     follow_symlinks: bool = False,
 ) -> Iterable[Path]:
+    """Recursively yield the python files under ``directory``, honouring the exclude/include precedence."""
     try:
         entries = sorted(directory.iterdir(), key=lambda p: ident_sort_key(p.name))
     except OSError as exc:
@@ -332,13 +341,27 @@ def discover_data_files(
     include: tuple[str, ...] = (),
     skip_dirs: Iterable[Path] = (),
     copy_data: bool = True,
+    data_glob: tuple[str, ...] = (),
 ) -> list[DataFile]:
     """Discover non-Python data files that should be preserved.
 
     This respects the same exclude/include precedence as :func:`discover`
     but looks for data extensions and well-known data filenames.
 
-    If copy_data is False, returns empty list (feature disabled).
+    Args:
+        root: Source file or directory that was consolidated.
+        exclude: Extra glob patterns to skip.
+        include: Glob patterns that re-include excluded entries.
+        skip_dirs: Directories never to walk (for example the output
+            directory, which may live inside the source tree).
+        copy_data: When ``False`` the feature is disabled and an empty list is
+            returned.
+        data_glob: When non-empty, only data files matching one of these globs
+            are returned (matched against the file name and its relative path).
+
+    Returns:
+        Data files to copy, each paired with its path relative to the package
+        root.
     """
     if not copy_data:
         return []
@@ -400,6 +423,11 @@ def discover_data_files(
                         rel = entry.relative_to(base).as_posix()
                     except ValueError:
                         rel = entry.name
+                    if data_glob and not any(
+                        fnmatch.fnmatch(entry.name, pat) or fnmatch.fnmatch(rel, pat)
+                        for pat in data_glob
+                    ):
+                        continue
                     data_files.append(DataFile(entry, rel))
                     logger.debug("Found data file: {} -> {}", entry, rel)
     if data_files:
@@ -481,13 +509,43 @@ def _metadata_name(directory: Path) -> str | None:
     return None
 
 
+def normalize_pkg_name(name: str) -> str:
+    """Turn a distribution/folder name into a valid python module name.
+
+    Packaging names may contain dots and dashes (``my-dist``, ``my.pkg``),
+    which cannot be used as a file/module name. Everything that is not a
+    letter, digit or underscore becomes ``_``; a leading digit is prefixed
+    with ``_``; empty results fall back to ``"consolidated"``.
+
+    Args:
+        name: Raw distribution name (``pyproject.toml`` ``[project].name``),
+            folder name, or module stem.
+
+    Returns:
+        A valid, importable identifier.
+    """
+    cleaned = re.sub(r"[^0-9A-Za-z_]+", "_", (name or "").strip())
+    cleaned = cleaned.strip("_")
+    if not cleaned:
+        return "consolidated"
+    if cleaned[0].isdigit():
+        cleaned = "_" + cleaned
+    return cleaned
+
+
 def detect_pkg_name(root: Path) -> str:
     """Detect the consolidated package name for ``root``.
 
     Investigates ``root`` and up to two directory levels above it (to cover
     ``src/<pkgname>`` layouts) for packaging metadata (``pyproject.toml``,
     ``setup.cfg``, ``setup.py``) and returns the declared project/package name.
-    When nothing is found, falls back to ``root``'s own folder name.
+    When nothing is found, falls back to ``root``'s own folder name (the
+    folder ``pyrefactor`` was pointed at, i.e. ``.`` when run inside a
+    package).
+
+    The result is always a valid python identifier so that it can be used
+    directly as ``consolidated/<pkgname>.py`` (``my-dist`` becomes
+    ``my_dist``).
 
     Args:
         root: Package directory being consolidated.
@@ -502,9 +560,9 @@ def detect_pkg_name(root: Path) -> str:
             break
         name = _metadata_name(current)
         if name:
-            return name
+            return normalize_pkg_name(name)
         current = current.parent
-    return root.name
+    return normalize_pkg_name(root.name)
 
 
 def detect_pyproject_config(root: Path) -> dict:

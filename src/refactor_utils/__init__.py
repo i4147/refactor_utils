@@ -1,6 +1,17 @@
 """refactor_utils: consolidate python packages into a single file."""
 
-from .core import ConsolidationError, ConsolidationResult, consolidate
+from .core import (
+    ConsolidationError,
+    ConsolidationResult,
+    consolidate,
+    consolidate_package,
+)
 
-__version__ = "0.1.0"
-__all__ = ["ConsolidationError", "ConsolidationResult", "consolidate", "__version__"]
+__version__ = "1.5.0"
+__all__ = [
+    "ConsolidationError",
+    "ConsolidationResult",
+    "consolidate",
+    "consolidate_package",
+    "__version__",
+]

@@ -100,6 +100,7 @@ class Plan:
 
 
 def _ext_local(key: tuple) -> str | None:
+    """Return the local name bound by an external import key."""
     if key[0] == "import":
         return key[2] or key[1].split(".")[0]
     if key[0] == "from":
@@ -108,12 +109,14 @@ def _ext_local(key: tuple) -> str | None:
 
 
 def _ext_identity(key: tuple) -> tuple:
+    """Return the identity of an external import key."""
     if key[0] == "import":
         return ("modalias", key[1]) if key[2] else ("mod", key[1].split(".")[0])
     return ("from", key[1], key[2])
 
 
 def _sanitize(text: str) -> str:
+    """Turn ``text`` into a safe python identifier fragment."""
     return re.sub(r"\W", "_", text).strip("_")
 
 
@@ -290,6 +293,7 @@ class Resolver:
         self._deduped_log: list[tuple[str, str]] = []
 
     def _entry_match(self, module: str) -> bool:
+        """Return ``True`` when ``module`` was selected by ``entry``."""
         return any(module == e or module.endswith("." + e) for e in self.entry)
 
     def _warn_once(self, msg: str) -> None:
@@ -305,6 +309,7 @@ class Resolver:
             logger.warning(msg)
 
     def _is_internal(self, spec: ImportSpec) -> bool:
+        """Return ``True`` when ``spec`` refers to a module inside the package being consolidated."""
         if spec.relative:
             return True
         return bool(spec.module) and (
@@ -348,19 +353,23 @@ class Resolver:
             self.canon[bid] = target
 
     def _prefix(self, module: str) -> str:
+        """Return the rename prefix for ``module``."""
         parts = module.split(".")
         if self.single_top and len(parts) > 1 and parts[0] == self.single_top:
             parts = parts[1:]
         return _sanitize("_".join(parts)) or "mod"
 
     def _suffix(self, module: str) -> str:
+        """Return the rename suffix for ``module``."""
         return self._prefix(module)
 
     def _module_path_prefix(self, module: str) -> str:
+        """Return the full dotted path of ``module`` as an identifier prefix."""
         # Full module path with dots -> underscores
         return _sanitize(module.replace(".", "_")) or "mod"
 
     def _star_names(self, module: str) -> list[str]:
+        """Return the names exported by a star import from ``module``."""
         mi = self.modules.get(module)
         if mi is None:
             return []
@@ -401,6 +410,7 @@ class Resolver:
     def _spec_target(
         self, spec: ImportSpec, seen: set, *, include_tc: bool = False
     ) -> Target | None:
+        """Resolve an import specification to a target (definition, module or external import)."""
         internal = self._is_internal(spec)
         if not spec.is_from:
             if internal:
@@ -427,6 +437,7 @@ class Resolver:
         *,
         include_tc: bool = False,
     ) -> Target | None:
+        """Resolve ``name`` as seen from ``module``, following re-exports."""
         if name == "__all__":
             return None
         blk = self.def_block.get((module, name))
@@ -471,6 +482,7 @@ class Resolver:
         env_map: dict[str, Target] | None = None,
         include_tc: bool = False,
     ) -> Target | None:
+        """Resolve a dotted attribute chain starting at ``obj``."""
         parts = obj.split(".")
         lookup = env_map if env_map is not None else self.env[module]
         tgt = lookup.get(parts[0])
@@ -708,6 +720,7 @@ class Resolver:
                         changed = True
 
     def _build_envs(self) -> None:
+        """Build the per-module name environments used for rewriting."""
         self._harvest_internal_all_imports()
         for m, mi in self.modules.items():
             env: dict[str, Target] = {}
@@ -782,10 +795,26 @@ class Resolver:
                 tgt = self._spec_target(spec, set())
                 if tgt is None:
                     if self._is_internal(spec):
+                        display = spec.module or "."
+                        name_part = f".{spec.name}" if spec.name else ""
+                        # A relative import that resolved to a bare name (or
+                        # to dots) has no package to anchor it: emitting it
+                        # verbatim would produce invalid syntax such as
+                        # ``from  import x`` outside a package.
+                        unrenderable = spec.relative and (
+                            not spec.module or spec.module.startswith(".")
+                        )
+                        if unrenderable:
+                            self._warn_once(
+                                f"{m}: cannot resolve internal import '{display}"
+                                f"{name_part}' (module skipped, missing, excluded "
+                                "or a compiled extension) — relative import dropped"
+                            )
+                            continue
                         self._warn_once(
-                            f"{m}: cannot resolve internal import '{spec.module}"
-                            f"{'.' + spec.name if spec.name else ''}' (module skipped, "
-                            "missing, excluded or a compiled extension) — kept verbatim"
+                            f"{m}: cannot resolve internal import '{display}"
+                            f"{name_part}' (module skipped, missing, excluded or "
+                            "a compiled extension) — kept verbatim"
                         )
                         tgt = self._verbatim_ext_target(spec)
                         # Compiled extensions register themselves on import, so
@@ -884,6 +913,7 @@ class Resolver:
             self.tc_env[m] = tc_env
 
     def _analyse(self) -> None:
+        """Collect references and import-time dependencies between blocks."""
         extra_eager: dict[int, set[Block]] = defaultdict(set)
         for b in self.blocks:
             env = self.env[b.module]
@@ -1037,6 +1067,7 @@ class Resolver:
         return out
 
     def _dedupe(self) -> None:
+        """Merge duplicate blocks according to ``dedupe`` mode."""
         if self.dedupe_mode == "none":
             logger.info("Dedupe disabled (--dedupe none)")
             return
@@ -1251,6 +1282,7 @@ class Resolver:
         return cand
 
     def _assign_names(self, kept: list[Block], emit_keys: set[tuple]) -> None:
+        """Assign final names to kept blocks, renaming collisions and main entry points."""
         ext_loc_modules: dict[str, set[str]] = defaultdict(set)
         for m, env in self.env.items():
             for local, tgt in env.items():
@@ -1371,6 +1403,7 @@ class Resolver:
         self._taken = taken
 
     def _resolve_ext_conflicts(self, emit_keys: set[tuple]) -> None:
+        """Alias external imports whose local names collide."""
         by_local: dict[str, list[tuple]] = defaultdict(list)
         for key in emit_keys:
             loc = _ext_local(key)
@@ -1407,6 +1440,7 @@ class Resolver:
         local: str | None,
         ext_map: dict[tuple, str] | None = None,
     ) -> str | None:
+        """Return the final name a target is bound to."""
         if tgt is None:
             return None
         if tgt[0] == "def":
@@ -1425,6 +1459,7 @@ class Resolver:
         ext_map: dict[tuple, str] | None = None,
         include_tc: bool = False,
     ) -> str:
+        """Render ``block`` applying the renames of ``env``."""
         edits: list[tuple[int, int, str]] = []
         for occ in b.occs:
             if occ.kind == "nested_import":
@@ -1485,6 +1520,7 @@ class Resolver:
         return text
 
     def _render_block(self, b: Block) -> str:
+        """Render ``block`` with its module environment."""
         return self._render_block_with_env(b, self.env[b.module])
 
     def _render_all(self, kept: list[Block]) -> dict[int, str]:
@@ -1756,6 +1792,7 @@ class Resolver:
     def _assemble(
         self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]
     ) -> Plan:
+        """Turn the kept blocks into the final plan (ordered blocks and import section)."""
         keyfn = lambda b: (self.mod_idx[b.module], b.order)  # noqa: E731
         body = [b for b in kept if b.kind != MAIN]
         mains = sorted((b for b in kept if b.kind == MAIN), key=keyfn)
@@ -1931,6 +1968,7 @@ class Resolver:
                 )
 
         def is_def_visible(blk_id: int, orig: str, fin: str) -> bool:
+            """Return ``True`` when a definition survives renaming in the exports map."""
             if orig == "__all__" or fin == "__all__":
                 return False
             if fin in DUNDER_EXPORTS:
@@ -1940,6 +1978,7 @@ class Resolver:
             return not orig.startswith("_") and not fin.startswith("_")
 
         def is_reexport_visible(mod: str, local: str) -> bool:
+            """Return ``True`` when a re-exported name should be kept in ``__all__``."""
             if local == "__all__":
                 return False
             if local in DUNDER_EXPORTS:

@@ -1,7 +1,16 @@
+"""Generate and maintain ``__all__`` for python packages.
+
+``autoall`` can patch a package (``autoall install``), compute ``__all__`` for
+an already imported package (:func:`ensure_all`), or update a plain module
+file in place (:func:`ensure_all_file`) — the mode used by ``pyrefactor`` for
+its ``consolidated/<pkgname>.py`` output.
+"""
+
 import argparse
 import ast
 import importlib
 import os
+import re
 import sys
 import warnings
 from collections.abc import Iterable
@@ -11,6 +20,7 @@ from types import ModuleType
 __version__ = "0.2.0"
 __all__ = [
     "__version__",
+    "build_all_block",
     "ensure_all",
     "ensure_all_file",
     "install",
@@ -25,7 +35,10 @@ _INSTALL_MARKER = "# --- autoall: ensure __all__ ---"
 _INSTALL_END_MARKER = "# --- end autoall ---"
 
 
-def _install_block(include_submodules: bool = False, include_dunders: bool = False) -> str:
+def _install_block(
+    include_submodules: bool = False, include_dunders: bool = False
+) -> str:
+    """Return the two-line ``ensure_all`` snippet appended by :func:`install`."""
     flags = ""
     if include_submodules:
         flags += ", include_submodules=True"
@@ -41,6 +54,7 @@ def _install_block(include_submodules: bool = False, include_dunders: bool = Fal
 
 
 def _init_path(pkg: ModuleType) -> Path | None:
+    """Return the ``__init__.py`` path of ``pkg`` (None for namespace packages)."""
     f = getattr(pkg, "__file__", None)
     if not f:
         return None
@@ -49,9 +63,15 @@ def _init_path(pkg: ModuleType) -> Path | None:
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically (temp file + ``os.replace``).
+
+    Args:
+        path: Destination file.
+        text: Full file content; written verbatim (no newline translation).
+    """
     tmp = path.with_name(path.name + ".autoall.tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8", newline="")
         os.replace(tmp, path)
     finally:
         try:
@@ -60,21 +80,69 @@ def _atomic_write(path: Path, text: str) -> None:
             pass
 
 
+def _marker_pattern(marker: str) -> re.Pattern[str]:
+    """Return a regex matching ``marker`` as a whole line.
+
+    Markers are matched only when they appear as standalone comment lines, so
+    the same text stored in a string constant (for example autoall's own
+    ``_MARKER_START``) is never mistaken for a generated block.
+
+    Args:
+        marker: Marker comment text (for example ``_MARKER_START``).
+
+    Returns:
+        Compiled pattern (``MULTILINE``, CRLF tolerant).
+    """
+    return re.compile(r"^" + re.escape(marker) + r"\r?$", re.MULTILINE)
+
+
+def _find_marker_block(src: str, start: str, end: str) -> tuple[int, int] | None:
+    """Locate a marker-delimited block in ``src``.
+
+    Searches for the last standalone ``start`` line and the first standalone
+    ``end`` line after it.
+
+    Args:
+        src: File content to search.
+        start: Opening marker comment.
+        end: Closing marker comment.
+
+    Returns:
+        ``(start_index, end_index)`` of the block (markers included), or
+        ``None`` when the block is missing.
+    """
+    start_re = _marker_pattern(start)
+    end_re = _marker_pattern(end)
+    for match in reversed(list(start_re.finditer(src))):
+        end_match = end_re.search(src, match.end())
+        if end_match is not None:
+            return match.start(), end_match.end()
+    return None
+
+
 def _strip_between(src: str, start: str, end: str) -> str:
-    if start not in src:
+    """Remove the text between ``start`` and ``end`` markers."""
+    block = _find_marker_block(src, start, end)
+    if block is None:
         return src
-    before, rest = src.split(start, 1)
-    after = rest.split(end, 1)[1] if end in rest else ""
-    return (before.rstrip() + "\n" + after.lstrip("\n")).rstrip() + "\n"
+    before, after = src[: block[0]], src[block[1] :]
+    return (before.rstrip() + "\n" + after.lstrip("\r\n")).rstrip() + "\n"
 
 
 def _extract_between(src: str, start: str, end: str) -> str | None:
-    if start not in src or end not in src.split(start, 1)[1]:
+    """Return the text between two markers, or None when absent."""
+    block = _find_marker_block(src, start, end)
+    if block is None:
         return None
-    return src.split(start, 1)[1].split(end, 1)[0]
+    start_re = _marker_pattern(start)
+    match = start_re.search(src, block[0])
+    if match is None:  # pragma: no cover - defensive
+        return None
+    return src[match.end() : block[1]].split(end, 1)[0]
 
 
 def _parse_all_literal(src: str) -> list[str] | None:
+    """Parse a literal ``__all__`` assignment from ``src``, or None."""
     try:
         tree = ast.parse(src)
     except SyntaxError:
@@ -97,6 +165,7 @@ def _parse_all_literal(src: str) -> list[str] | None:
 
 
 def _has_all_binding(tree: ast.Module) -> bool:
+    """Return ``True`` when the module already binds ``__all__``."""
     for node in tree.body:
         if isinstance(node, ast.Assign):
             if any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
@@ -108,12 +177,17 @@ def _has_all_binding(tree: ast.Module) -> bool:
             for a in node.names:
                 if a.asname == "__all__":
                     return True
-                if isinstance(node, ast.ImportFrom) and a.name == "__all__" and a.asname is None:
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and a.name == "__all__"
+                    and a.asname is None
+                ):
                     return True
     return False
 
 
 def _public(name: str, include_dunders: bool) -> bool:
+    """Return ``True`` when ``name`` is part of the public API."""
     if not name.isidentifier():
         return False
     if name.startswith("__") and name.endswith("__"):
@@ -122,10 +196,12 @@ def _public(name: str, include_dunders: bool) -> bool:
 
 
 def _is_own_module(name: str, root: str) -> bool:
+    """Return ``True`` when ``name`` belongs to the ``root`` package."""
     return name == root or name.startswith(root + ".")
 
 
 def _relative_target(pkg: ModuleType, node: ast.ImportFrom) -> str:
+    """Return the absolute dotted target of a ``from . import ...`` node."""
     base = pkg.__name__.split(".")
     if node.level > 1:
         base = base[: len(base) - (node.level - 1)]
@@ -134,6 +210,7 @@ def _relative_target(pkg: ModuleType, node: ast.ImportFrom) -> str:
 
 
 def _star_names(pkg: ModuleType, node: ast.ImportFrom) -> list[str]:
+    """Return the public names a ``from .mod import *`` would bind."""
     root = pkg.__name__.split(".")[0]
     modname = _relative_target(pkg, node)
     if not modname or modname == pkg.__name__ or not _is_own_module(modname, root):
@@ -161,11 +238,13 @@ def _collect_names(
     include_submodules: bool,
     include_dunders: bool,
 ) -> list[str]:
+    """Collect the public names defined or re-exported by ``pkg``."""
     root = pkg.__name__.split(".")[0]
     names: list[str] = []
     seen: set[str] = set()
 
     def add(name: str) -> None:
+        """Record ``name`` if it is public and new."""
         if name in seen or not _public(name, include_dunders):
             return
         if not include_submodules and isinstance(pkg.__dict__.get(name), ModuleType):
@@ -188,7 +267,9 @@ def _collect_names(
             if node.value is not None and isinstance(node.target, ast.Name):
                 add(node.target.id)
         elif isinstance(node, ast.ImportFrom):
-            own = node.level > 0 or (node.module is not None and _is_own_module(node.module, root))
+            own = node.level > 0 or (
+                node.module is not None and _is_own_module(node.module, root)
+            )
             if not own:
                 continue
             for alias in node.names:
@@ -205,10 +286,38 @@ def _collect_names(
 
 
 def _build_block(names: Iterable[str]) -> str:
+    """Build the marker-delimited ``__all__`` block for ``names``.
+
+    The returned text starts and ends with a newline so it can be appended to
+    an existing module body verbatim. ``names`` are emitted in the order given
+    (one per line, trailing commas) so the block is stable across runs.
+
+    Args:
+        names: Public names to list in ``__all__``.
+
+    Returns:
+        The rendered block, including the ``autoall`` start/end markers.
+    """
     lines = ["", _MARKER_START, "__all__ = ["]
     lines.extend(f"    {n!r}," for n in names)
     lines.extend(["]", _MARKER_END, ""])
     return "\n".join(lines)
+
+
+def build_all_block(names: Iterable[str]) -> str:
+    """Return the ``__all__`` block that :func:`ensure_all` would write.
+
+    Public helper used by tools (for example ``pyrefactor``) that need to know
+    the exact bytes of the generated block *before* touching the file on disk,
+    so ``--check``/``--stdout`` can show what will be written.
+
+    Args:
+        names: Public names to list in ``__all__``.
+
+    Returns:
+        The rendered marker block (see :func:`_build_block`).
+    """
+    return _build_block(names)
 
 
 def _collect_names_module(tree: ast.Module) -> list[str]:
@@ -226,6 +335,7 @@ def _collect_names_module(tree: ast.Module) -> list[str]:
     seen: set[str] = set()
 
     def add(name: str) -> None:
+        """Record ``name`` if it is public and not ``__all__`` itself."""
         if name == "__all__" or name in seen or not _public(name, False):
             return
         seen.add(name)
@@ -250,6 +360,13 @@ def _collect_names_module(tree: ast.Module) -> list[str]:
     return sorted(names)
 
 
+def _detect_eol(src: str) -> str:
+    """Return the dominant line ending of ``src`` (``"\r\n"`` or ``"\n"``)."""
+    crlf = src.count("\r\n")
+    lf = src.count("\n") - crlf
+    return "\r\n" if crlf > lf else "\n"
+
+
 def ensure_all_file(
     path: str | Path,
     *,
@@ -261,7 +378,12 @@ def ensure_all_file(
     importable package: the file is parsed with :mod:`ast`, public top-level
     names (functions, classes, constants) are collected, and an
     ``__all__ = [...]`` block between the autoall markers is written back to
-    the same file (atomically, via :func:`_atomic_write`).
+    the same file, in place and atomically (via :func:`_atomic_write`).
+
+    The rewrite is idempotent: when the block is already present and up to
+    date the file is left untouched, and the module's own line endings
+    (LF or CRLF) are preserved. Existing user ``__all__`` definitions outside
+    the marker block are respected and not modified.
 
     Args:
         path: Path to the ``.py`` file to process.
@@ -273,7 +395,10 @@ def ensure_all_file(
     """
     p = Path(path)
     try:
-        src = p.read_text(encoding="utf-8")
+        # ``newline=""`` keeps the file's own line endings so the rewrite is
+        # byte-for-byte idempotent (CRLF stays CRLF).
+        with open(p, encoding="utf-8", newline="") as handle:
+            src = handle.read()
     except OSError as exc:
         warnings.warn(f"autoall: cannot read {p}: {exc}", stacklevel=2)
         return []
@@ -282,16 +407,25 @@ def ensure_all_file(
     except SyntaxError as exc:
         warnings.warn(f"autoall: cannot parse {p}: {exc}", stacklevel=2)
         return []
+    # A user-written ``__all__`` outside the marker block always wins: never
+    # add a second, conflicting binding.
+    user_src = _strip_between(src, _MARKER_START, _MARKER_END)
+    try:
+        user_tree = ast.parse(user_src)
+    except SyntaxError:  # pragma: no cover - src already parsed fine
+        user_tree = None
+    if user_tree is not None and _has_all_binding(user_tree):
+        existing = _parse_all_literal(user_src)
+        return list(existing) if existing is not None else []
     names = _collect_names_module(tree)
-    block = _build_block(names)
-    if _MARKER_START in src and _MARKER_END in src:
-        before, rest = src.split(_MARKER_START, 1)
-        after = rest.split(_MARKER_END, 1)[1]
-        new_src = (
-            before.rstrip() + "\n" + block + "\n" + after.lstrip("\n")
-        ).rstrip() + "\n"
+    eol = _detect_eol(src)
+    block = _build_block(names).replace("\n", eol)
+    existing = _find_marker_block(src, _MARKER_START, _MARKER_END)
+    if existing is not None:
+        before, after = src[: existing[0]], src[existing[1] :]
+        new_src = (before.rstrip() + eol + block + after.lstrip("\r\n")).rstrip() + eol
     else:
-        new_src = src.rstrip() + "\n" + block
+        new_src = src.rstrip() + eol + block
     if persist and new_src != src:
         try:
             _atomic_write(p, new_src)
@@ -301,6 +435,7 @@ def ensure_all_file(
 
 
 def _resolve_path(target: str | Path) -> Path:
+    """Resolve a package directory, ``__init__.py`` or dotted name to its ``__init__.py``."""
     p = Path(target)
     if p.is_dir():
         init = p / "__init__.py"
@@ -325,15 +460,32 @@ def ensure_all(
     include_submodules: bool = False,
     include_dunders: bool = False,
 ) -> list[str]:
+    """Set ``__all__`` on an imported package, generating it once.
+
+    The block is written to ``__init__.py`` between the autoall markers when the
+    package does not already define ``__all__`` itself.
+
+    Args:
+        pkg_name: Dotted name of an importable package.
+        persist: Write the generated block back to ``__init__.py``.
+        include_submodules: Also list imported submodules.
+        include_dunders: Also list dunder constants.
+
+    Returns:
+        The names placed in ``__all__``.
+    """
     pkg = sys.modules.get(pkg_name) or importlib.import_module(pkg_name)
     if "__all__" in pkg.__dict__:
         return list(pkg.__all__)
     init_py = _init_path(pkg)
     if init_py is None:
-        warnings.warn(f"autoall: {pkg_name!r} is not a file-based package", stacklevel=2)
+        warnings.warn(
+            f"autoall: {pkg_name!r} is not a file-based package", stacklevel=2
+        )
         return []
     try:
-        src = init_py.read_text(encoding="utf-8")
+        with open(init_py, encoding="utf-8", newline="") as handle:
+            src = handle.read()
     except OSError:
         src = ""
     user_src = _strip_between(src, _MARKER_START, _MARKER_END)
@@ -383,17 +535,36 @@ def install(
     include_submodules: bool = False,
     include_dunders: bool = False,
 ) -> Path:
+    """Append the ``ensure_all()`` snippet to a package's ``__init__.py``.
+
+    Args:
+        target: Package directory, ``__init__.py`` or dotted name.
+        include_submodules: Passed to the generated call.
+        include_dunders: Passed to the generated call.
+
+    Returns:
+        The patched ``__init__.py`` path.
+    """
     init_py = _resolve_path(target)
     src = init_py.read_text(encoding="utf-8")
     if _INSTALL_MARKER in src:
         return init_py
     _atomic_write(
-        init_py, src.rstrip() + "\n" + _install_block(include_submodules, include_dunders)
+        init_py,
+        src.rstrip() + "\n" + _install_block(include_submodules, include_dunders),
     )
     return init_py
 
 
 def uninstall(target: str | Path) -> Path:
+    """Remove the autoall injection and generated block.
+
+    Args:
+        target: Package directory, ``__init__.py`` or dotted name.
+
+    Returns:
+        The cleaned ``__init__.py`` path.
+    """
     init_py = _resolve_path(target)
     src = init_py.read_text(encoding="utf-8")
     new_src = _strip_between(
@@ -407,6 +578,7 @@ def uninstall(target: str | Path) -> Path:
 
 
 def is_installed(target: str | Path) -> bool:
+    """Return ``True`` when the package's ``__init__.py`` carries the autoall snippet."""
     try:
         init_py = _resolve_path(target)
     except FileNotFoundError:
@@ -420,6 +592,16 @@ def regenerate(
     include_submodules: bool = False,
     include_dunders: bool = False,
 ) -> list[str]:
+    """Regenerate ``__all__`` for an already imported package.
+
+    Args:
+        pkg_name: Dotted name of the package.
+        include_submodules: Also list imported submodules.
+        include_dunders: Also list dunder constants.
+
+    Returns:
+        The regenerated ``__all__`` names.
+    """
     pkg = sys.modules.get(pkg_name) or importlib.import_module(pkg_name)
     init_py = _init_path(pkg)
     if init_py is None:
@@ -435,6 +617,7 @@ def regenerate(
 
 
 def _cli_install(args: argparse.Namespace) -> int:
+    """Handle ``autoall install``."""
     for t in args.targets:
         try:
             print(
@@ -446,6 +629,7 @@ def _cli_install(args: argparse.Namespace) -> int:
 
 
 def _cli_uninstall(args: argparse.Namespace) -> int:
+    """Handle ``autoall uninstall``."""
     for t in args.targets:
         try:
             print(f"unpatched: {uninstall(t)}")
@@ -455,6 +639,7 @@ def _cli_uninstall(args: argparse.Namespace) -> int:
 
 
 def _cli_regen(args: argparse.Namespace) -> int:
+    """Handle ``autoall regen``."""
     for n in args.names:
         print(
             f"{n}: {regenerate(n, include_submodules=args.submodules, include_dunders=args.dunders)}"
@@ -463,6 +648,7 @@ def _cli_regen(args: argparse.Namespace) -> int:
 
 
 def _cli_status(args: argparse.Namespace) -> int:
+    """Handle ``autoall status``."""
     rc = 0
     for t in args.targets:
         try:
@@ -480,6 +666,14 @@ def _cli_status(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the ``autoall`` command line interface.
+
+    Args:
+        argv: Argument list to parse (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Process exit code.
+    """
     parser = argparse.ArgumentParser(
         prog="autoall",
         description="Auto-generate __all__ for Python packages.",
@@ -499,13 +693,23 @@ def main(argv: list[str] | None = None) -> int:
             help="package dir, path to __init__.py, or dotted module name",
         )
         if name == "install":
-            p.add_argument("--submodules", action="store_true", help="also list bound submodules")
-            p.add_argument("--dunders", action="store_true", help="also list dunder constants")
+            p.add_argument(
+                "--submodules", action="store_true", help="also list bound submodules"
+            )
+            p.add_argument(
+                "--dunders", action="store_true", help="also list dunder constants"
+            )
         p.set_defaults(func=fn)
     p_regen = sub.add_parser("regen", help="force regeneration for imported packages")
-    p_regen.add_argument("names", nargs="+", metavar="NAME", help="dotted package names")
-    p_regen.add_argument("--submodules", action="store_true", help="also list bound submodules")
-    p_regen.add_argument("--dunders", action="store_true", help="also list dunder constants")
+    p_regen.add_argument(
+        "names", nargs="+", metavar="NAME", help="dotted package names"
+    )
+    p_regen.add_argument(
+        "--submodules", action="store_true", help="also list bound submodules"
+    )
+    p_regen.add_argument(
+        "--dunders", action="store_true", help="also list dunder constants"
+    )
     p_regen.set_defaults(func=_cli_regen)
     args = parser.parse_args(argv)
     return args.func(args) or 0

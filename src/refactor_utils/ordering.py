@@ -51,6 +51,7 @@ def topo_order(
     out: list[Block] = []
 
     def push(bid: int) -> None:
+        """Queue block ``bid`` in the heap for its rank tier."""
         b = by_id[bid]
         heapq.heappush(heaps[rank(b)], (key(b), bid))
         queued.add(bid)

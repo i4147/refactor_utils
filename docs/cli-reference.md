@@ -38,8 +38,19 @@ usage: pyrefactor [-h] [-o OUTPUT] [-j WORKERS] [--jobs JOBS]
 
 The CLI no longer accepts `--mode`; it always produces the consolidated
 single-file layout (`consolidated/<pkgname>.py`) described in Quickstart.
-The legacy multi-file layouts (`--mode package|module|flat|split`) remain
+The legacy multi-file layouts (`mode="package"|"module"|"flat"|"split"`) remain
 available through the library API (`refactor_utils.core.consolidate`).
+
+`[tool.pyrefactor]` in `pyproject.toml` is read automatically (or from
+`--config PATH`); values only fill in flags that were not passed explicitly.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | success (or `--check` found no drift) |
+| `1` | unexpected failure, or strictness rule triggered (`--strict`, `--fail-on-warning`, `--max-skipped`) |
+| `2` | bad input / build problem (`ConsolidationError`, including a failing `--check`) |
 
 ## Parallelism
 
@@ -53,8 +64,8 @@ available through the library API (`refactor_utils.core.consolidate`).
 
 - `-x GLOB, --exclude GLOB` — skip glob (repeatable) — `discovery.py`.
 - `--include GLOB` — re-include; precedence `default < --include < --exclude`.
-- `--copy-data` (default) / `--no-copy-data` — copy data files preserving relative paths.
-- `--data-glob GLOB` — only copy data matching glob.
+- `--copy-data` / `--no-copy-data` — copy data files preserving paths relative to the package (opt-in; off by default for the `consolidated/` layout).
+- `--data-glob GLOB` — only copy data matching glob (repeatable, matches file name or relative path).
 
 ## Entry
 

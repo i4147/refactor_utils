@@ -11,3 +11,10 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# generated documentation site (HTML); the single-file PDF is tracked
+site/
+
+# pyrefactor output layout
+consolidated/
+*.autoall.tmp
