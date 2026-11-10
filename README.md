@@ -45,9 +45,12 @@ their relative paths unless `--no-copy-data` is given.
 - `__all__` is never emitted as code. `__all__ = […]`, `__all__ += […]`,
   `__all__.append(…)` and annotated forms are only read as hints and dropped;
   the exported surface is recomputed from the surviving definitions.
-- `main` functions and `if __name__ == "__main__":` guards go to the end
-  (`--entry MODULE`, `--entry-keep-all`, `--main-name NAME`,
-  `--generate-guard`).
+- `main` functions and `if __name__ == "__main__":` guards go to the end.
+  When several modules have their own guard, they are **merged into a single
+  guard** whose body runs each original entry point, annotated with the module
+  it came from — stacked guards would make every one but the first dead code.
+  Control which entries survive with `--entry MODULE` / `--entry-keep-all`, and
+  the names with `--main-name NAME` / `--generate-guard`.
 - **Validation is mandatory**: the generated module is compiled and smoke
   imported before anything is written; a broken result is never emitted. A
   source file that cannot be parsed aborts the run instead of degrading output.

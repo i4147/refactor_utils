@@ -527,3 +527,140 @@ def test_section_headers_are_not_repeated(tmp_path: Path):
     text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
     assert text.count("# Classes") == 1
     assert text.count("# Constants") == 1
+
+# --------------------------------------------------------------------------- #
+# multiple __main__ guards
+# --------------------------------------------------------------------------- #
+def test_multiple_main_guards_are_merged_into_one_block(tmp_path: Path):
+    write_tree(
+        tmp_path,
+        {
+            "pkg/a.py": '''
+                def first():
+                    print("first ran")
+
+                if __name__ == "__main__":
+                    first()
+            ''',
+            "pkg/b.py": '''
+                import sys
+
+                def second():
+                    print("second ran")
+
+                if __name__ == "__main__":
+                    try:
+                        second()
+                    except KeyboardInterrupt:
+                        sys.exit(0)
+            ''',
+        },
+    )
+    result = run_cli(tmp_path, "pkg", "--no-copy-data")
+    assert result.returncode == 0, result.stderr
+    text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
+    tree = ast.parse(text)
+    guards = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and "__main__" in ast.dump(node.test)
+    ]
+    # stacked guards would mean everything but the first is dead code
+    assert len(guards) == 1
+    assert "# from a" in text and "# from b" in text
+    assert "Merged 2 '__main__' guards" in result.stderr
+
+
+def test_merged_guard_runs_every_entry_point(tmp_path: Path):
+    write_tree(
+        tmp_path,
+        {
+            "pkg/a.py": '''
+                def first():
+                    print("first ran")
+
+                if __name__ == "__main__":
+                    first()
+            ''',
+            "pkg/b.py": '''
+                def second():
+                    print("second ran")
+
+                if __name__ == "__main__":
+                    second()
+            ''',
+        },
+    )
+    result = run_cli(tmp_path, "pkg", "--no-copy-data")
+    assert result.returncode == 0, result.stderr
+    generated = tmp_path / "output" / f"{tmp_path.name}.py"
+    run = subprocess.run(
+        [sys.executable, str(generated)], capture_output=True, text=True
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.split() == ["first", "ran", "second", "ran"]
+
+
+def test_entry_flag_keeps_a_single_guard(tmp_path: Path):
+    write_tree(
+        tmp_path,
+        {
+            "pkg/a.py": 'if __name__ == "__main__":\n    pass\n',
+            "pkg/b.py": 'if __name__ == "__main__":\n    pass\n',
+        },
+    )
+    result = run_cli(tmp_path, "pkg", "--no-copy-data", "--entry", "a")
+    assert result.returncode == 0, result.stderr
+    text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
+    assert text.count('if __name__ == "__main__"') == 1
+    assert "# from a" in text and "# from b" not in text
+
+
+def test_main_function_is_kept_before_the_merged_guard(tmp_path: Path):
+    write_tree(
+        tmp_path,
+        {
+            "pkg/cli.py": '''
+                def main():
+                    return 1
+
+                if __name__ == "__main__":
+                    main()
+            ''',
+            "pkg/other.py": 'if __name__ == "__main__":\n    print("other")\n',
+        },
+    )
+    result = run_cli(tmp_path, "pkg", "--no-copy-data")
+    assert result.returncode == 0, result.stderr
+    text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
+    tail = text[text.index("# Entry points") :]
+    assert tail.count('if __name__ == "__main__"') == 1
+    assert tail.index("def main()") < tail.index('if __name__ == "__main__"')
+
+
+def test_guard_header_with_trailing_comment_is_merged_correctly(tmp_path: Path):
+    write_tree(
+        tmp_path,
+        {
+            "pkg/a.py": '''
+                # module main entry
+                if __name__ == "__main__":  # pragma: no cover
+                    print("a")
+            ''',
+            "pkg/b.py": 'if __name__ == "__main__":\n    print("b")\n',
+        },
+    )
+    result = run_cli(tmp_path, "pkg", "--no-copy-data")
+    assert result.returncode == 0, result.stderr
+    text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
+    tail = text[text.index("# Entry points") :]
+    # the header itself must not be re-emitted inside the merged body
+    assert tail.count('if __name__ == "__main__"') == 1
+    run = subprocess.run(
+        [sys.executable, str(tmp_path / "output" / f"{tmp_path.name}.py")],
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.split() == ["a", "b"]
