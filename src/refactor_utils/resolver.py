@@ -197,7 +197,9 @@ class Resolver:
             return []
         if mi.declared_all is not None:
             return list(mi.declared_all)
-        names = [n for (m, n) in self.def_block if m == module and not n.startswith("_")]
+        names = [
+            n for (m, n) in self.def_block if m == module and not n.startswith("_")
+        ]
         names += [n for n in self.import_table.get(module, {}) if not n.startswith("_")]
         return names
 
@@ -444,9 +446,7 @@ class Resolver:
             name
             for mi in self.modules.values()
             for g in mi.guards
-            for name in (
-                [s.local_name for s in g.specs] + list(g.bound_names)
-            )
+            for name in ([s.local_name for s in g.specs] + list(g.bound_names))
             if name
         }
         group: dict[str, list[Block]] = defaultdict(list)
@@ -601,9 +601,7 @@ class Resolver:
             texts = [self._render_block(b) for b in kept]
         return {b.bid: t for b, t in zip(kept, texts)}
 
-    def _merge_mains(
-        self, mains: list[Block], texts: dict[int, str]
-    ) -> str | None:
+    def _merge_mains(self, mains: list[Block], texts: dict[int, str]) -> str | None:
         """Build one ``if __name__ == "__main__":`` block from every guard."""
         sections: list[tuple[str, list[str]]] = []
         seen: set[str] = set()
@@ -658,13 +656,19 @@ class Resolver:
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
             rendered.append(
                 RenderedBlock(
-                    _SECTION[b.kind], b.kind, texts[b.bid], origin=origin, module=b.module
+                    _SECTION[b.kind],
+                    b.kind,
+                    texts[b.bid],
+                    origin=origin,
+                    module=b.module,
                 )
             )
         for b in tail_ordered:
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
             rendered.append(
-                RenderedBlock("entry", b.kind, texts[b.bid], origin=origin, module=b.module)
+                RenderedBlock(
+                    "entry", b.kind, texts[b.bid], origin=origin, module=b.module
+                )
             )
         # Several modules usually guard their own entry point.  Emitted as-is
         # only the first guard would ever run (every guard has the same
@@ -734,7 +738,12 @@ class Resolver:
         definitions that survive dedupe/renaming (constants, classes or
         functions), which keeps private names out.
         """
-        groups = {CONST: "constants", MISC: "constants", CLASS: "classes", FUNC: "functions"}
+        groups = {
+            CONST: "constants",
+            MISC: "constants",
+            CLASS: "classes",
+            FUNC: "functions",
+        }
         seen: set[str] = set()
         for b in kept:
             if b.kind == MAIN:

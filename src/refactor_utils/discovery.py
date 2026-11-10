@@ -230,9 +230,7 @@ def _walk(
                 continue
             if resolved in skip:
                 continue
-            yield from _walk(
-                entry, skip, extra_globs, include, follow_symlinks, base
-            )
+            yield from _walk(entry, skip, extra_globs, include, follow_symlinks, base)
         elif entry.suffix == ".py":
             posix = entry.as_posix()
             if _is_excluded(entry, posix, entry.name, extra_globs, include, rel):

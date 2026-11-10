@@ -59,12 +59,12 @@ def project(tmp_path: Path) -> Path:
                     """Return a value."""
                     return a + len(os.sep)
             ''',
-            "pkg/other.py": '''
+            "pkg/other.py": """
                 LIMIT = 99
 
                 def other():
                     return LIMIT
-            ''',
+            """,
             "data/settings.json": "{}",
         },
     )
@@ -110,7 +110,7 @@ def test_all_constants_emitted(project: Path):
     run_cli(project, "pkg", "--no-copy-data")
     text = (project / "output" / f"{project.name}.py").read_text()
     assert "LIMIT = 10" in text
-    assert "NAME: str = \"demo\"" in text
+    assert 'NAME: str = "demo"' in text
     assert "other_LIMIT = 99" in text
 
 
@@ -118,16 +118,16 @@ def test_dunder_all_not_emitted(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/__init__.py": '''
+            "pkg/__init__.py": """
                 __all__ = ["a"]
                 __all__ += ["b"]
                 __all__.append("c")
-            ''',
-            "pkg/mod.py": '''
+            """,
+            "pkg/mod.py": """
                 a = 1
                 b = 2
                 c = 3
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -144,14 +144,14 @@ def test_identical_definitions_deduped(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 def shared():
                     return 1
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 def shared():
                     return 1
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -164,17 +164,17 @@ def test_different_definitions_with_same_name_are_renamed(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 def shared():
                     return 1
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 def shared():
                     return 2
 
                 def use():
                     return shared()
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -194,7 +194,7 @@ def test_type_checking_imports_merged_into_head(tmp_path: Path):
         tmp_path,
         {
             "pkg/__init__.py": "from .core import run\n",
-            "pkg/core.py": '''
+            "pkg/core.py": """
                 from __future__ import annotations
                 from typing import TYPE_CHECKING
 
@@ -204,11 +204,11 @@ def test_type_checking_imports_merged_into_head(tmp_path: Path):
 
                 def run(t: Thing, xs: List[int]) -> int:
                     return len(xs)
-            ''',
-            "pkg/types.py": '''
+            """,
+            "pkg/types.py": """
                 class Thing:
                     pass
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -223,7 +223,7 @@ def test_type_checking_definitions_flattened(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/mod.py": '''
+            "pkg/mod.py": """
                 from typing import TYPE_CHECKING
 
                 if TYPE_CHECKING:
@@ -231,7 +231,7 @@ def test_type_checking_definitions_flattened(tmp_path: Path):
 
                     class Proto:
                         pass
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -259,9 +259,9 @@ def test_export_sorting_private_names_first():
 
     plan = Plan([], "", "", [])
     names = ["zebra", "_lead", "Apple"]
-    plan.exports["functions"] = sorted(names, key=__import__(
-        "refactor_utils.imports", fromlist=["sort_key"]
-    ).sort_key)
+    plan.exports["functions"] = sorted(
+        names, key=__import__("refactor_utils.imports", fromlist=["sort_key"]).sort_key
+    )
     assert plan.exports["functions"] == ["_lead", "Apple", "zebra"]
 
 
@@ -376,7 +376,7 @@ def test_nested_imports_are_not_hoisted(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 def loose(raw):
                     import json
                     return json.loads(raw)
@@ -387,7 +387,7 @@ def test_nested_imports_are_not_hoisted(tmp_path: Path):
                     except ImportError:
                         import tomli as tomllib
                     return tomllib
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -436,7 +436,7 @@ def test_conditional_import_guards_are_not_hoisted(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 try:
                     import tomllib
                 except ImportError:
@@ -444,13 +444,13 @@ def test_conditional_import_guards_are_not_hoisted(tmp_path: Path):
 
                 def load(raw):
                     return tomllib.loads(raw)
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 import tomllib
 
                 def other(raw):
                     return tomllib.loads(raw)
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -467,16 +467,16 @@ def test_guard_bound_names_are_not_shadowed(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 try:
                     import tomllib
                     HAS = True
                 except ImportError:
                     HAS = False
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 HAS = "other"
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -492,7 +492,7 @@ def test_guard_with_import_and_class_warns(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 try:
                     import tomllib
 
@@ -500,7 +500,7 @@ def test_guard_with_import_and_class_warns(tmp_path: Path):
                         pass
                 except ImportError:
                     Loader = None
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -514,12 +514,12 @@ def test_section_headers_are_not_repeated(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 class NS:
                     pass
 
                 NS.attr = 3
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -528,6 +528,7 @@ def test_section_headers_are_not_repeated(tmp_path: Path):
     assert text.count("# Classes") == 1
     assert text.count("# Constants") == 1
 
+
 # --------------------------------------------------------------------------- #
 # multiple __main__ guards
 # --------------------------------------------------------------------------- #
@@ -535,14 +536,14 @@ def test_multiple_main_guards_are_merged_into_one_block(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 def first():
                     print("first ran")
 
                 if __name__ == "__main__":
                     first()
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 import sys
 
                 def second():
@@ -553,7 +554,7 @@ def test_multiple_main_guards_are_merged_into_one_block(tmp_path: Path):
                         second()
                     except KeyboardInterrupt:
                         sys.exit(0)
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -563,8 +564,7 @@ def test_multiple_main_guards_are_merged_into_one_block(tmp_path: Path):
     guards = [
         node
         for node in tree.body
-        if isinstance(node, ast.If)
-        and "__main__" in ast.dump(node.test)
+        if isinstance(node, ast.If) and "__main__" in ast.dump(node.test)
     ]
     # stacked guards would mean everything but the first is dead code
     assert len(guards) == 1
@@ -576,20 +576,20 @@ def test_merged_guard_runs_every_entry_point(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 def first():
                     print("first ran")
 
                 if __name__ == "__main__":
                     first()
-            ''',
-            "pkg/b.py": '''
+            """,
+            "pkg/b.py": """
                 def second():
                     print("second ran")
 
                 if __name__ == "__main__":
                     second()
-            ''',
+            """,
         },
     )
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
@@ -621,13 +621,13 @@ def test_main_function_is_kept_before_the_merged_guard(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/cli.py": '''
+            "pkg/cli.py": """
                 def main():
                     return 1
 
                 if __name__ == "__main__":
                     main()
-            ''',
+            """,
             "pkg/other.py": 'if __name__ == "__main__":\n    print("other")\n',
         },
     )
@@ -643,11 +643,11 @@ def test_guard_header_with_trailing_comment_is_merged_correctly(tmp_path: Path):
     write_tree(
         tmp_path,
         {
-            "pkg/a.py": '''
+            "pkg/a.py": """
                 # module main entry
                 if __name__ == "__main__":  # pragma: no cover
                     print("a")
-            ''',
+            """,
             "pkg/b.py": 'if __name__ == "__main__":\n    print("b")\n',
         },
     )

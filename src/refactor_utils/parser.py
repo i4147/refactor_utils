@@ -41,7 +41,16 @@ _COMPOUND = {
 _IMPORT_TYPES = {"import_statement", "import_from_statement", "future_import_statement"}
 _DEF_TYPES = {"function_definition", "class_definition", "decorated_definition"}
 _STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
-_ALL_METHODS = {"append", "extend", "insert", "remove", "pop", "clear", "sort", "reverse"}
+_ALL_METHODS = {
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "clear",
+    "sort",
+    "reverse",
+}
 # Dynamic & metaprogramming detection patterns
 _DYNAMIC_PATTERNS = {
     "importlib": re.compile(r"\bimportlib\b"),
@@ -110,7 +119,11 @@ def parse_import(
     if any(c.type == "wildcard_import" for c in node.children):
         return [
             ImportSpec(
-                mod, is_from=True, star=True, relative=relative, type_checking=type_checking
+                mod,
+                is_from=True,
+                star=True,
+                relative=relative,
+                type_checking=type_checking,
             )
         ]
     for ch in node.children_by_field_name("name"):
@@ -588,9 +601,7 @@ def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
                 if method in _ALL_METHODS:
                     args = e.child_by_field_name("arguments")
                     for arg in args.named_children if args is not None else ():
-                        if (
-                            arg.type == "argument_list"
-                        ):  # pragma: no cover - defensive
+                        if arg.type == "argument_list":  # pragma: no cover - defensive
                             continue
                         info.declared_all = (info.declared_all or []) + _STR_RE.findall(
                             _t(arg)
@@ -733,9 +744,14 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                         f"{info.module}: conditional import guarded by '{cond.strip()}' kept verbatim"
                     )
             imports, has_def = _scan(n)
-            is_try_guard = imports and not has_def and t in (
-                "if_statement",
-                "try_statement",
+            is_try_guard = (
+                imports
+                and not has_def
+                and t
+                in (
+                    "if_statement",
+                    "try_statement",
+                )
             )
             if is_try_guard:
                 start, end = _extent(n)
