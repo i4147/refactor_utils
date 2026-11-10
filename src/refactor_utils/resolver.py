@@ -67,6 +67,27 @@ def _content_hash(source: bytes) -> str:
     return hashlib.sha1(normalised).hexdigest()
 
 
+def _guard_body(text: str) -> list[str]:
+    """Return the body lines of an ``if __name__ == "__main__":`` block.
+
+    Leading comment lines are ignored, the header line is dropped and the body
+    is de-indented so it can be re-emitted under a fresh guard header.
+    """
+    lines = text.splitlines()
+    header = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        # The header may carry a trailing comment (``...:  # pragma: no cover``)
+        # and may be preceded by comment lines picked up with the block.
+        if stripped.startswith("if ") and "__main__" in stripped:
+            header = i
+            break
+    body = lines[header + 1 :] if header is not None else lines
+    indents = [len(ln) - len(ln.lstrip()) for ln in body if ln.strip()]
+    cut = min(indents) if indents else 0
+    return [ln[cut:] if ln.strip() else "" for ln in body]
+
+
 class Resolver:
     def __init__(
         self,
@@ -580,6 +601,33 @@ class Resolver:
             texts = [self._render_block(b) for b in kept]
         return {b.bid: t for b, t in zip(kept, texts)}
 
+    def _merge_mains(
+        self, mains: list[Block], texts: dict[int, str]
+    ) -> str | None:
+        """Build one ``if __name__ == "__main__":`` block from every guard."""
+        sections: list[tuple[str, list[str]]] = []
+        seen: set[str] = set()
+        for b in mains:
+            body = _guard_body(texts[b.bid])
+            key_body = "\n".join(line.rstrip() for line in body).strip()
+            if not key_body:
+                continue
+            if key_body in seen:
+                continue
+            seen.add(key_body)
+            sections.append((b.module, body))
+        if not sections:
+            return None
+        indent = "    "
+        out = ['if __name__ == "__main__":']
+        for i, (module, body) in enumerate(sections):
+            if i:
+                out.append("")
+            out.append(f"{indent}# from {module}")
+            for line in body:
+                out.append(f"{indent}{line}" if line.strip() else "")
+        return "\n".join(out).rstrip()
+
     def _assemble(
         self, kept: list[Block], texts: dict[int, str], emit_keys: set[tuple]
     ) -> Plan:
@@ -613,10 +661,26 @@ class Resolver:
                     _SECTION[b.kind], b.kind, texts[b.bid], origin=origin, module=b.module
                 )
             )
-        for b in tail_ordered + mains:
+        for b in tail_ordered:
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
             rendered.append(
                 RenderedBlock("entry", b.kind, texts[b.bid], origin=origin, module=b.module)
+            )
+        # Several modules usually guard their own entry point.  Emitted as-is
+        # only the first guard would ever run (every guard has the same
+        # condition), so all kept guards are merged into ONE block whose body
+        # runs each original entry, annotated with its source module.
+        merged_guard = self._merge_mains(mains, texts)
+        if merged_guard is not None:
+            modules = ", ".join(b.module for b in mains)
+            rendered.append(
+                RenderedBlock(
+                    "entry",
+                    MAIN,
+                    merged_guard,
+                    origin=f"merged from {modules}",
+                    module=mains[0].module,
+                )
             )
         if self.generate_guard and not mains:
             mains_funcs = [
@@ -637,13 +701,16 @@ class Resolver:
                 )
                 logger.info("Auto-generated __main__ guard")
         if len(mains) > 1:
-            if self.entry_keep_all:
-                logger.info("{} '__main__' guards kept (--entry-keep-all)", len(mains))
-            else:
-                logger.warning(
-                    "{} '__main__' guards were kept; use --entry to keep only one",
-                    len(mains),
-                )
+            logger.info(
+                "Merged {} '__main__' guards into a single entry block (from {})",
+                len(mains),
+                ", ".join(b.module for b in mains),
+            )
+            logger.warning(
+                "{} modules define their own entry point; only one can run at a "
+                "time. Use --entry MODULE to keep a single one.",
+                len(mains),
+            )
         guards: list[str] = []
         for mi in self.modules.values():
             for g in mi.guards:
