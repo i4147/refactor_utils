@@ -1,6 +1,5 @@
 """Orchestration: discover -> parse (parallel) -> resolve -> validate -> write."""
 
-from __future__ import annotations
 import difflib
 import fnmatch
 import importlib.util
@@ -186,7 +185,7 @@ def _config_list(cfg: dict, key: str) -> tuple[str, ...]:
     return tuple(value) if isinstance(value, list) else (value,)
 
 
-def validate_output(text: str, filename: str, do_import: bool=False) -> None:
+def validate_output(text: str, filename: str, do_import: bool = False) -> None:
     """Compile the generated module and smoke import it.
 
     Validation is mandatory and always runs before anything is written, so an

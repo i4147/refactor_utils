@@ -1,6 +1,5 @@
 """Render the consolidated module and its ``__init__`` re-export stub."""
 
-from __future__ import annotations
 import os
 import subprocess
 import tempfile

@@ -1,6 +1,5 @@
 """tree-sitter based extraction of top-level blocks (runs inside worker processes)."""
 
-from __future__ import annotations
 import ast
 import re
 import threading

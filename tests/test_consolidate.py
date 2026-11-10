@@ -3,7 +3,6 @@
 Run with:  .venv/bin/python -m pytest tests -q     (or plain `python tests/run_checks.py`)
 """
 
-from __future__ import annotations
 import ast
 import subprocess
 import sys
@@ -49,7 +48,6 @@ def project(tmp_path: Path) -> Path:
             ''',
             "pkg/core.py": '''
                 """Core module."""
-                from __future__ import annotations
                 import os
 
                 LIMIT = 10
@@ -195,7 +193,6 @@ def test_type_checking_imports_merged_into_head(tmp_path: Path):
         {
             "pkg/__init__.py": "from .core import run\n",
             "pkg/core.py": """
-                from __future__ import annotations
                 from typing import TYPE_CHECKING
 
                 if TYPE_CHECKING:
