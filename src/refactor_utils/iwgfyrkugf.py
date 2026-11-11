@@ -197,6 +197,8 @@ def consolidate(
         list(pool.map(lambda t: t[0].write_text(t[1], encoding="utf-8"), targets))
     exports = sum(len(v) for v in plan.exports.values())
     return ConsolidationResult(output, [p for p, _ in targets], len(modules), skipped, exports)
+
+
 # File: discovery.py
 """Find the python files of a project and derive their dotted module names."""
 
@@ -287,6 +289,8 @@ def discover(root: Path, exclude: tuple[str, ...] = (), skip_dirs: Iterable[Path
             parts = [base.name]
         files.append(SourceFile(path, ".".join(parts), is_pkg))
     return files
+
+
 # File: imports.py
 """Merge, de-duplicate, sort and render the import section."""
 
@@ -366,6 +370,8 @@ def build_import_section(keys: Iterable[tuple], ext_final: Mapping[tuple, str]) 
         if lines:
             chunks.append("\n".join(lines))
     return "\n\n".join(chunks)
+
+
 # File: logging_setup.py
 """loguru configuration."""
 
@@ -382,6 +388,8 @@ def setup_logging(level: str = "INFO", log_file: Path | None = None) -> None:
     logger.add(sys.stderr, level=level.upper(), format=_FMT)
     if log_file is not None:
         logger.add(log_file, level="DEBUG", rotation="5 MB", enqueue=True)
+
+
 # File: models.py
 """Plain, picklable data structures shared by the parser and the resolver."""
 
@@ -475,6 +483,8 @@ class SourceFile:
     path: "object"
     module: str
     is_pkg: bool
+
+
 # File: ordering.py
 """Dependency-aware ordering of blocks."""
 
@@ -538,6 +548,8 @@ def topo_order(
             if not pending[dep] and dep not in queued and dep not in done:
                 push(dep)
     return out
+
+
 # File: parser.py
 """tree-sitter based extraction of top-level blocks (runs inside worker processes)."""
 
@@ -961,6 +973,8 @@ def parse_module_file(path_str: str, module: str, is_pkg: bool) -> ModuleInfo:
     except Exception as exc:  # noqa: BLE001 - reported to the caller, never crashes a worker
         info.errors.append(f"{path_str}: extraction failed: {exc!r}")
     return info
+
+
 # File: resolver.py
 """Cross-module resolution: name collisions, import rewriting, dedupe, ordering."""
 
@@ -1425,6 +1439,8 @@ class Resolver:
                 plan.exports[groups.get(b.kind, "constants")].append(fin)
         for names in plan.exports.values():
             names.sort(key=lambda x: (x.lower(), x))
+
+
 # File: writer.py
 from __future__ import annotations
 from .imports import future_section
