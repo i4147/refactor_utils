@@ -1,7 +1,9 @@
 """Cross-module resolution: name collisions, import rewriting, dedupe, ordering."""
 
 import hashlib
+import keyword
 import re
+import unicodedata
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -56,6 +58,37 @@ def _ext_identity(key: tuple) -> tuple:
 
 def _sanitize(text: str) -> str:
     return re.sub(r"\W", "_", text).strip("_")
+
+
+def is_valid_identifier(name: str) -> bool:
+    """True when ``name`` can be bound by ``class``/``def``/assignment."""
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def make_identifier(text: str, fallback: str = "mod") -> str:
+    """Turn arbitrary text into a valid, non-keyword Python identifier.
+
+    Every generated name (collision renames, import aliases) goes through
+    this, so a module called ``2.py`` or ``my-mod.py`` can never produce
+    names such as ``2_Tokenizer`` that Python rejects:
+
+    - characters that cannot appear in an identifier become ``_``;
+    - a name that would start with a digit gets an ``m`` prefix
+      (``2`` -> ``m2``), keeping it public rather than ``_``-private;
+    - keywords get a trailing ``_`` (``class`` -> ``class_``).
+    """
+    text = unicodedata.normalize("NFKC", text)
+    out = "".join(
+        ch if (ch == "_" or ch.isalnum()) and f"a{ch}".isidentifier() else "_"
+        for ch in text
+    )
+    if not out.strip("_"):
+        out = fallback
+    if not out[0].isidentifier():
+        out = f"m{out}"
+    if keyword.iskeyword(out):
+        out += "_"
+    return out
 
 
 def _content_hash(source: bytes) -> str:
@@ -188,7 +221,10 @@ class Resolver:
         parts = module.split(".")
         if self.single_top and len(parts) > 1 and parts[0] == self.single_top:
             parts = parts[1:]
-        return _sanitize("_".join(parts)) or "mod"
+        # Module names come from file names, which need not be identifiers
+        # (``2.py``, ``my-mod.py``): the prefix must be usable at the *start*
+        # of a name.
+        return make_identifier(_sanitize("_".join(parts)) or "mod")
 
     def _star_names(self, module: str) -> list[str]:
         mi = self.modules.get(module)
@@ -470,7 +506,7 @@ class Resolver:
                         cand = main_override
                     else:
                         base_name = main_override
-                        cand = f"{base_name}_{self._prefix(b.module)}"
+                        cand = make_identifier(f"{base_name}_{self._prefix(b.module)}")
                         base, n = cand, 2
                         while cand in taken or cand in group:
                             cand, n = f"{base}_{n}", n + 1
@@ -491,7 +527,7 @@ class Resolver:
                 else:
                     lead = name[: len(name) - len(name.lstrip("_"))]
                     raw = name.lstrip("_")
-                    cand = f"{lead}{self._prefix(b.module)}_{raw}"
+                    cand = make_identifier(f"{lead}{self._prefix(b.module)}_{raw}")
                     base, n = cand, 2
                     while cand in taken or cand in group:
                         cand, n = f"{base}_{n}", n + 1
@@ -528,7 +564,9 @@ class Resolver:
                 if ident in aliased:
                     self.ext_final[k] = aliased[ident]
                     continue
-                base = _sanitize(k[1]) + (f"_{k[2]}" if k[0] == "from" else "")
+                base = make_identifier(
+                    _sanitize(k[1]) + (f"_{k[2]}" if k[0] == "from" else "")
+                )
                 cand, n = base, 2
                 while cand in taken:
                     cand, n = f"{base}_{n}", n + 1

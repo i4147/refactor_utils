@@ -28,4 +28,5 @@ undo/
 .mypy_cache/
 *.zip
 *.whl
-
+*.egg-info/
+site/

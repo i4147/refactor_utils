@@ -20,6 +20,7 @@ pyrefactor = "refactor_utils.cli:main"
 format = ["black"]
 progress = ["tqdm"]
 dev = ["pytest", "ruff"]
+docs = ["mkdocs>=1.5", "mkdocs-material>=9", "xhtml2pdf>=0.2.16"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

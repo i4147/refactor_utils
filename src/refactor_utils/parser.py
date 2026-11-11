@@ -613,6 +613,23 @@ def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
     return False
 
 
+def _is_bare_string(node: Node | None) -> bool:
+    """True for a string literal used as a statement (a docstring).
+
+    f-strings are excluded: their interpolations are evaluated, so they may
+    have side effects and are not documentation.
+    """
+    if node is None or node.type not in ("string", "concatenated_string"):
+        return False
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if cur.type == "interpolation":
+            return False
+        stack.extend(cur.children)
+    return True
+
+
 def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     info.future_annotations = any(
         n.type == "future_import_statement" and b"annotations" in n.text
@@ -683,6 +700,8 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                 if _collect_all_stmt(ch, info):
                     continue
                 e = ch.named_children[0] if ch.named_children else None
+                if _is_bare_string(e):
+                    continue
                 if e is not None and e.type in ("assignment", "augmented_assignment"):
                     names = _target_names(e)
                     if names:
@@ -694,12 +713,10 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             else:
                 add(MISC, _bound_names(ch), ch, dedent=True)
 
-    first = True
     for n in root.named_children:
         t = n.type
         if t == "comment":
             continue
-        is_first, first = first, False
         if t in _IMPORT_TYPES:
             info.imports.extend(parse_import(n, info.module, info.is_pkg))
         elif t in _DEF_TYPES:
@@ -712,7 +729,10 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             add(kind, [_t(d.child_by_field_name("name"))], n, own=d)
         elif t == "expression_statement":
             e = n.named_children[0] if n.named_children else None
-            if e is None or (is_first and e.type == "string"):
+            # Module docstrings are pruned: they describe a source file that no
+            # longer exists in the consolidated module.  Any other bare string
+            # statement at module level is equally inert and dropped with it.
+            if e is None or _is_bare_string(e):
                 continue
             if _collect_all_stmt(n, info):
                 continue
