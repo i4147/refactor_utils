@@ -33,7 +33,9 @@ their relative paths unless `--no-copy-data` is given.
   that are byte-identical (ignoring blank lines/trailing spaces) are merged into
   a single definition; bodies that differ keep both definitions and the
   shallower module keeps the plain name while the others become
-  `<module_path>_<name>`. Every reference (`from .x import y as z`, `mod.attr`,
+  `<module_path>_<name>`. Generated names are always valid Python identifiers:
+  a module called `2.py` yields `m2_Tokenizer` (never `2_Tokenizer`),
+  `my-mod.py` yields `my_mod_…`, keywords get a trailing `_`. Every reference (`from .x import y as z`, `mod.attr`,
   annotations, decorators, defaults) is rewritten accordingly.
 - Merges, prunes, de-duplicates and conflict-aliases imports
   (`--imports prune|keep|strict`), grouping `__future__` / stdlib / third-party.
@@ -42,6 +44,8 @@ their relative paths unless `--no-copy-data` is given.
   imports inside join the normal import section (deduplicated against imports
   already present at the top of the file), and constants/classes/functions
   defined under `TYPE_CHECKING` are extracted as ordinary blocks.
+- Module docstrings of the source files are pruned (the result carries one
+  generated docstring); class and function docstrings are kept.
 - `__all__` is never emitted as code. `__all__ = […]`, `__all__ += […]`,
   `__all__.append(…)` and annotated forms are only read as hints and dropped;
   the exported surface is recomputed from the surviving definitions.
@@ -51,9 +55,10 @@ their relative paths unless `--no-copy-data` is given.
   it came from — stacked guards would make every one but the first dead code.
   Control which entries survive with `--entry MODULE` / `--entry-keep-all`, and
   the names with `--main-name NAME` / `--generate-guard`.
-- **Validation is mandatory**: the generated module is compiled and smoke
-  imported before anything is written; a broken result is never emitted. A
-  source file that cannot be parsed aborts the run instead of degrading output.
+- **Syntax validation**: the generated module is parsed with `ast`
+  (`validate_syntax()`) before anything is written; a result that is not valid
+  Python is never emitted. The code is not executed or imported. A source file
+  that cannot be parsed aborts the run instead of degrading output.
 - Errors and warnings are logged with **loguru** (`--log-level`, `--log-file`).
 
 ## CLI
@@ -91,7 +96,7 @@ usage: pyrefactor [-h] [-o OUTPUT] [--name NAME] [-j WORKERS]
 | `--main-name NAME` | — | rename `main` to `NAME` |
 | `--generate-guard` | off | synthesise `if __name__ == "__main__": main()` |
 | `--imports` | `prune` | `prune` = drop unused, `keep` = keep all, `strict` = prune + warn |
-| `--keep-docstrings / --no-keep-docstrings` | on | keep docstrings |
+| `--keep-docstrings / --no-keep-docstrings` | on | keep class/function docstrings (module docstrings are always pruned) |
 | `--keep-comments / --no-keep-comments` | on | keep comments |
 | `--dry-run` | off | print the plan, never write |
 | `--check` | off | fail (exit 2) if the output would change |
@@ -110,7 +115,7 @@ Removed in 2.0: `--mode`, `--validate`, `--validate-import`,
 `--keep-unused-imports`, `--post-format`, `--pyproject`, `--setup-cfg`,
 `--strict`, `--fail-on-warning`, `--respect-all`. There is one layout, one
 dedupe strategy (content hash), one rename strategy (`<module>_<name>`) and
-validation always runs.
+the `ast` syntax check always runs.
 
 ## Examples
 
@@ -178,13 +183,35 @@ picklable and the resolver never touches tree-sitter nodes.
   verbatim and may have side effects.
 - Dynamic `importlib`/`__import__` dependencies are warned about, not resolved.
 
+## Documentation
+
+Full documentation lives in [`docs/`](docs/index.md) (MkDocs) and, as a single
+file, in [`docs.pdf`](docs.pdf).
+
+```bash
+.venv/bin/pip install -e ".[docs]"
+tools/serve_docs.sh        # live preview
+tools/build_docs.sh        # site/ + docs.pdf
+```
+
 ## Development
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e .[dev]
-.venv/bin/python -m pytest tests -q
-.venv/bin/ruff check src tests
+python -m venv .venv && .venv/bin/pip install -e ".[dev,docs]"
+tools/run_checks.sh                    # tests + sample + strict docs build
+.venv/bin/python -m pytest tests -q    # tests only
 ```
+
+Helper scripts in `tools/`:
+
+| Script | Purpose |
+|--------|---------|
+| `run_checks.sh` | tests, sample check, strict docs build (`--lint`, `--no-docs`) |
+| `check_syntax.py PATH...` | validate files/directories with `validate_syntax` |
+| `regen_sample.py` | regenerate `mytest/result.py` (`--check` to verify) |
+| `build_docs.sh` | build `site/` and `docs.pdf` (`--html`, `--pdf`) |
+| `build_pdf.py` | build `docs.pdf` from the `mkdocs.yml` nav |
+| `serve_docs.sh` | `mkdocs serve` live preview |
 
 # repo address
 

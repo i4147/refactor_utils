@@ -1,0 +1,58 @@
+site_name: refactor_utils
+site_description: Consolidate a Python package or project into one dependency-ordered file.
+repo_url: https://github.com/i4147/refactor_utils
+repo_name: i4147/refactor_utils
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+
+# docs.pdf (repository root) is built from this same nav by tools/build_pdf.py
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Usage:
+      - Command line: usage/cli.md
+      - Configuration: usage/configuration.md
+      - Python API: usage/python-api.md
+      - Recipes: usage/recipes.md
+  - How it works:
+      - Pipeline: internals/pipeline.md
+      - Name resolution and renaming: internals/name-resolution.md
+      - Imports: internals/imports.md
+      - Docstrings, comments and __all__: internals/docstrings.md
+      - Entry points: internals/entry-points.md
+      - Validation: internals/validation.md
+  - Troubleshooting: troubleshooting.md
+  - Known limits: limitations.md
+  - Development: development.md
+  - Changelog: changelog.md

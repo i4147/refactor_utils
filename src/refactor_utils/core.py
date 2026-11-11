@@ -1,12 +1,11 @@
-"""Orchestration: discover -> parse (parallel) -> resolve -> validate -> write."""
+"""Orchestration: discover -> parse (parallel) -> resolve -> ast-validate -> write."""
 
+import ast
 import difflib
 import fnmatch
-import importlib.util
 import os
 import shutil
 import sys
-import traceback
 from concurrent.futures import (
     BrokenExecutor,
     Executor,
@@ -21,7 +20,7 @@ from loguru import logger
 from .discovery import discover, discover_data_files, detect_pyproject_config
 from .models import ModuleInfo, SourceFile
 from .parser import parse_module_file
-from .resolver import Plan, Resolver
+from .resolver import Plan, Resolver, is_valid_identifier
 from .writer import render_consolidated
 
 
@@ -185,45 +184,34 @@ def _config_list(cfg: dict, key: str) -> tuple[str, ...]:
     return tuple(value) if isinstance(value, list) else (value,)
 
 
-def validate_output(text: str, filename: str, do_import: bool = False) -> None:
-    """Compile the generated module and smoke import it.
+def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module:
+    """Check that ``text`` is syntactically valid Python using :mod:`ast`.
 
-    Validation is mandatory and always runs before anything is written, so an
-    invalid result is never persisted.  The smoke import executes module-level
-    code; when it fails (e.g. an optional third-party dependency is missing in
-    the current environment) the run fails with :class:`ConsolidationError`.
+    This is the only validation step: the generated code is parsed, never
+    executed or imported, so missing third-party dependencies or module-level
+    side effects cannot make it fail.  It runs on every generated module
+    before anything is written; on a syntax error :class:`ConsolidationError`
+    is raised (with the offending line) and no file is touched.
+
+    Returns the parsed :class:`ast.Module` so callers may inspect it further.
     """
     try:
-        compile(text, filename, "exec")
+        return ast.parse(text, filename=filename)
     except SyntaxError as exc:
+        line = (exc.text or "").strip()
+        if not line and exc.lineno:
+            lines = text.splitlines()
+            if 0 < exc.lineno <= len(lines):
+                line = lines[exc.lineno - 1].strip()
+        where = f"line {exc.lineno}" if exc.lineno else "unknown line"
+        detail = f": {line!r}" if line else ""
         raise ConsolidationError(
-            f"generated {filename} is not valid python: {exc.msg} (line {exc.lineno})"
+            f"generated {filename} is not valid python: {exc.msg} ({where}){detail}"
         ) from exc
-    if not do_import:
-        return
-    try:
-        import tempfile
-
-        mod_name = "_consolidated_validate"
-        with tempfile.TemporaryDirectory() as tmp:
-            mod_path = Path(tmp) / f"{mod_name}.py"
-            mod_path.write_text(text, encoding="utf-8")
-            spec = importlib.util.spec_from_file_location(mod_name, str(mod_path))
-            if spec is None or spec.loader is None:
-                logger.warning("Validation import skipped: no loader for {}", filename)
-                return
-            module = importlib.util.module_from_spec(spec)
-            # Register before executing: dataclasses/typing look the module up.
-            sys.modules[mod_name] = module
-            try:
-                spec.loader.exec_module(module)  # type: ignore[union-attr]
-            finally:
-                sys.modules.pop(mod_name, None)
-        logger.success("Validation import passed")
-    except Exception as exc:  # noqa: BLE001 - surface, then let the caller decide
-        logger.error("Validation import failed: {}", exc)
-        logger.debug("{}", traceback.format_exc())
-        raise ConsolidationError(f"validation import failed: {exc}") from exc
+    except ValueError as exc:  # e.g. source contains null bytes
+        raise ConsolidationError(
+            f"generated {filename} is not valid python: {exc}"
+        ) from exc
 
 
 def consolidate(
@@ -274,6 +262,10 @@ def consolidate(
         if cfg.get("data_glob"):
             data_glob = _config_list(cfg, "data_glob")
 
+    if main_name is not None and not is_valid_identifier(main_name):
+        raise ConsolidationError(
+            f"--main-name {main_name!r} is not a valid python identifier"
+        )
     source, output = Path(source), Path(output)
     if not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
@@ -358,7 +350,8 @@ def consolidate(
     )
     exports = sum(len(v) for v in plan.exports.values())
 
-    # validate_output(mod_text, filename, do_import=not stdout)
+    # Mandatory, syntax-only check: a result that does not parse is never written.
+    validate_syntax(mod_text, filename)
 
     diff_text = ""
     target = output / filename
@@ -431,7 +424,7 @@ def consolidate(
             "",
             mod_text if stdout else "",
             [],
-            validated=False,
+            validated=True,
             dry_run=True,
             plan=plan,
         )

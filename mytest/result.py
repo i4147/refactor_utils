@@ -15,27 +15,11 @@ from urllib.request import urlretrieve
 
 
 __version__ = "0.15.0"
-
-__all__ = [
-    "Tokenizer",
-    "Encoding",
-    "AddedToken",
-    "models",
-    "trainers",
-    "decoders",
-    "normalizers",
-    "pre_tokenizers",
-    "post_processors",
-    "from_file",
-]
-
-__version__ = "0.0.1-mock"
+__m2_version__ = "0.0.1-mock"
 
 _PRETOKENIZE = re.compile(
     r"""'s|'t|'re|'ve|'m|'ll|'d| ?[^\W\d_]+| ?\d+| ?[^\s\w]+|\s+(?!\S)|\s+"""
 )
-
-_BYTE_DECODER = {v: k for k, v in _BYTE_ENCODER.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +571,7 @@ class Tokenizer:
         return f"Tokenizer(vocab_size={self.get_vocab_size()})"
 
 
-class 2_Encoding:
+class m2_Encoding:
     __slots__ = ("ids", "tokens", "attention_mask")
 
     def __init__(self, ids, tokens, attention_mask):
@@ -599,7 +583,7 @@ class 2_Encoding:
         return f"Encoding(num_tokens={len(self.ids)})"
 
 
-class 2_Tokenizer:
+class m2_Tokenizer:
     def __init__(self, vocab=None, merges=None, unk_token="<unk>"):
         self.vocab = dict(vocab) if vocab else {}
         self.merges = dict(merges) if merges else {}
@@ -649,7 +633,7 @@ class 2_Tokenizer:
                 for bt in self._bpe(mapped):
                     tokens.append(bt)
                     ids.append(self.vocab.get(bt, self.vocab.get(self.unk_token, 0)))
-        return 2_Encoding(ids=ids, tokens=tokens, attention_mask=[1] * len(ids))
+        return m2_Encoding(ids=ids, tokens=tokens, attention_mask=[1] * len(ids))
 
     def decode(self, ids, skip_special_tokens=True):
         specials = set(self.added_tokens)
@@ -781,3 +765,4 @@ def _get_ranked_pairs(word, merges):
 
 
 _BYTE_ENCODER = _bytes_to_unicode()
+_BYTE_DECODER = {v: k for k, v in _BYTE_ENCODER.items()}
