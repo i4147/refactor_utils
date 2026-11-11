@@ -17,3 +17,8 @@ class 2_Tokenenizer:
 
 i hope yoy check other renaming logic, and consider python valifity of renamed ones (new names)
 
+
+another issue:
+in current state of 0 project, module docstr8ngs are considered as const and will be written to consolidated file,
+new behaviour:
+  module docstrings of source file will be prunned ( will not be written to result code)
