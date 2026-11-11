@@ -1,0 +1,13 @@
+loguru
+tree-sitter
+tree_sitter_python
+
+[dev]
+pytest
+ruff
+
+[format]
+black
+
+[progress]
+tqdm
