@@ -1,8 +1,8 @@
-"""Plain, picklable data structures shared by the parser and the resolver."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
 
 CONST = "const"
 CLASS = "class"
@@ -14,16 +14,15 @@ MAIN = "main"
 @dataclass(frozen=True)
 class ImportSpec:
     module: str
-    name: str | None = None
-    alias: str | None = None
+    name: Optional[str] = None
+    alias: Optional[str] = None
     is_from: bool = False
     star: bool = False
     relative: bool = False
-    # True when the import lived inside an `if TYPE_CHECKING:` block.
     type_checking: bool = False
 
     @property
-    def local_name(self) -> str | None:
+    def local_name(self) -> Optional[str]:
         if self.star:
             return None
         if self.is_from:
@@ -36,19 +35,19 @@ class Occ:
     start: int
     end: int
     name: str
-    kind: str
+    kind: str  # "name" | "attr" | "nested_import"
     eager: bool = True
     obj: str = ""
-    specs: tuple[ImportSpec, ...] = ()
+    specs: tuple = ()
 
 
 @dataclass(eq=False)
 class Block:
     module: str
     kind: str
-    names: list[str]
+    names: list
     source: bytes
-    occs: list[Occ]
+    occs: list
     order: int
     bid: int = -1
     orig_path: str = ""
@@ -60,7 +59,7 @@ class Block:
     def primary(self) -> str:
         return self.names[0] if self.names else ""
 
-    def merge(self, other: Block) -> None:
+    def merge(self, other: "Block") -> None:
         shift = len(self.source) + 1
         for occ in other.occs:
             occ.start += shift
@@ -75,10 +74,8 @@ class Block:
 @dataclass
 class GuardBlock:
     text: str
-    specs: list[ImportSpec]
-    # Names bound by the *body* of the guard when it is more than an import
-    # wrapper (e.g. ``try: import x; ok = True`` binds ``x`` and ``ok``).
-    bound_names: list[str] = field(default_factory=list)
+    specs: list = field(default_factory=list)
+    bound_names: list = field(default_factory=list)
     conditional: bool = False
 
 
@@ -86,27 +83,25 @@ class GuardBlock:
 class ModuleInfo:
     module: str
     path: str
-    is_pkg: bool
-    imports: list[ImportSpec] = field(default_factory=list)
-    blocks: list[Block] = field(default_factory=list)
-    guards: list[GuardBlock] = field(default_factory=list)
-    declared_all: list[str] | None = None
+    is_pkg: bool = False
+    imports: list = field(default_factory=list)
+    blocks: list = field(default_factory=list)
+    guards: list = field(default_factory=list)
+    declared_all: Optional[list] = None
     future_annotations: bool = False
-    warnings: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class SourceFile:
-    path: object
+    path: Path
     module: str
-    is_pkg: bool
+    is_pkg: bool = False
 
 
 @dataclass(frozen=True)
 class DataFile:
-    """Non-Python data file discovered alongside the source tree."""
-
-    path: object
-    relative: str  # relative to source base, for output placement
+    path: Path
+    relative: str
     kind: str = "data"

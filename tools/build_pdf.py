@@ -49,8 +49,16 @@ FONT_FILES = {
     ("DocMono", "bold", "normal"): "DejaVuSansMono-Bold.ttf",
 }
 ASCII_FALLBACK = {
-    "\u2192": "->", "\u2190": "<-", "\u2014": "-", "\u2013": "-", "\u2026": "...",
-    "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2022": "*",
+    "\u2192": "->",
+    "\u2190": "<-",
+    "\u2014": "-",
+    "\u2013": "-",
+    "\u2026": "...",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2022": "*",
 }
 
 CSS = """
@@ -165,7 +173,9 @@ def find_fonts() -> dict[tuple[str, str, str], Path] | None:
     """Locate the fonts; missing bold/italic variants fall back to regular."""
     for directory in FONT_DIRS:
         found = {key: directory / name for key, name in FONT_FILES.items()}
-        regular = {fam: found[(fam, "normal", "normal")] for fam in ("DocSans", "DocMono")}
+        regular = {
+            fam: found[(fam, "normal", "normal")] for fam in ("DocSans", "DocMono")
+        }
         if not all(p.is_file() for p in regular.values()):
             continue
         for (fam, weight, style), path in list(found.items()):
@@ -222,7 +232,7 @@ def build_html(config: dict, docs_dir: Path, version: str) -> str:
         f'<p class="cover-sub">{html.escape(config.get("site_description", ""))}</p>',
         '<p class="cover-sub">Documentation</p>',
         f'<p class="cover-meta">Version {html.escape(version)}<br/>'
-        f'{html.escape(config.get("repo_url", ""))}</p>',
+        f"{html.escape(config.get('repo_url', ''))}</p>",
         "</div><pdf:nextpage/>",
         '<p class="toc-title">Contents</p><pdf:toc/>',
     ]

@@ -4,8 +4,7 @@ Before anything is written, the generated module is checked by one small
 function:
 
 ```python
-def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module:
-    ...
+def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module: ...
 ```
 
 It calls `ast.parse(text)`. That is all.
@@ -62,6 +61,7 @@ a syntax error aborts the run and is listed in the error message.
 
 ```python
 from refactor_utils import validate_syntax
+
 validate_syntax(open("some_file.py").read(), "some_file.py")
 ```
 

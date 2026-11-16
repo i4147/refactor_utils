@@ -66,7 +66,9 @@ def test_make_identifier(raw, expected):
     assert is_valid_identifier(got)
 
 
-@pytest.mark.parametrize("raw", ["9", "0x", "a-b", "é2", "²", "for", "x y", "💥", "1.5"])
+@pytest.mark.parametrize(
+    "raw", ["9", "0x", "a-b", "é2", "²", "for", "x y", "💥", "1.5"]
+)
 def test_make_identifier_is_always_valid(raw):
     got = make_identifier(raw)
     assert got.isidentifier() and not keyword.iskeyword(got)

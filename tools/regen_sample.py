@@ -55,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         current = TARGET.read_text(encoding="utf-8") if TARGET.is_file() else None
         if current != text:
-            print(f"{TARGET.relative_to(ROOT)} is out of date; run tools/regen_sample.py")
+            print(
+                f"{TARGET.relative_to(ROOT)} is out of date; run tools/regen_sample.py"
+            )
             return 1
         print(f"{TARGET.relative_to(ROOT)} is up to date")
         return 0

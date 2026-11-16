@@ -145,7 +145,7 @@ pyrefactor . --format --formatter ruff --no-keep-comments
 
 ```toml
 [tool.pyrefactor]
-exclude = ["tests/*", "iwgfyrkugf.py"]
+exclude = ["tests/*"]
 include = []
 entry = []
 imports = "prune"
@@ -182,36 +182,6 @@ picklable and the resolver never touches tree-sitter nodes.
 - Guarded imports (`try/except ImportError`, `if sys.platform …`) are kept
   verbatim and may have side effects.
 - Dynamic `importlib`/`__import__` dependencies are warned about, not resolved.
-
-## Documentation
-
-Full documentation lives in [`docs/`](docs/index.md) (MkDocs) and, as a single
-file, in [`docs.pdf`](docs.pdf).
-
-```bash
-.venv/bin/pip install -e ".[docs]"
-tools/serve_docs.sh        # live preview
-tools/build_docs.sh        # site/ + docs.pdf
-```
-
-## Development
-
-```bash
-python -m venv .venv && .venv/bin/pip install -e ".[dev,docs]"
-tools/run_checks.sh                    # tests + sample + strict docs build
-.venv/bin/python -m pytest tests -q    # tests only
-```
-
-Helper scripts in `tools/`:
-
-| Script | Purpose |
-|--------|---------|
-| `run_checks.sh` | tests, sample check, strict docs build (`--lint`, `--no-docs`) |
-| `check_syntax.py PATH...` | validate files/directories with `validate_syntax` |
-| `regen_sample.py` | regenerate `mytest/result.py` (`--check` to verify) |
-| `build_docs.sh` | build `site/` and `docs.pdf` (`--html`, `--pdf`) |
-| `build_pdf.py` | build `docs.pdf` from the `mkdocs.yml` nav |
-| `serve_docs.sh` | `mkdocs serve` live preview |
 
 # repo address
 

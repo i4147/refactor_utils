@@ -1,13 +1,15 @@
 import argparse
 import sys
 from pathlib import Path
+
 from loguru import logger
+
 from . import __version__
 from .core import ConsolidationError, consolidate
 from .logging_setup import setup_logging
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser():
     p = argparse.ArgumentParser(
         prog="pyrefactor",
         description=(
@@ -35,7 +37,6 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: the current directory name, e.g. output/<cwd>.py)"
         ),
     )
-    # Parallelism
     p.add_argument(
         "-j",
         "--workers",
@@ -52,7 +53,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--progress", action="store_true", help="show progress bar during parsing"
     )
-
     # Discovery / filtering
     p.add_argument(
         "-x",
@@ -79,14 +79,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="copy data files (json, yaml, csv, txt, ...) to output (default: on)",
     )
     p.add_argument(
+        "--embed-data",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "embed data files in the consolidated output as a _DATA_FILES dict\n"
+            "(default: same as --copy-data)"
+        ),
+    )
+    p.add_argument(
         "--data-glob",
         action="append",
         default=[],
         metavar="GLOB",
-        help="only copy data files matching this glob (repeatable)",
+        help="only copy/embed data files matching this glob (repeatable)",
     )
-
-    # Entry / main handling
     p.add_argument(
         "--entry",
         action="append",
@@ -111,8 +118,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help='auto-generate `if __name__ == "__main__": main()` if no guard exists',
     )
-
-    # Imports
     p.add_argument(
         "--imports",
         choices=["prune", "keep", "strict"],
@@ -122,8 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
             "strict (prune and warn on unused)"
         ),
     )
-
-    # Output content
     p.add_argument(
         "--keep-docstrings",
         action=argparse.BooleanOptionalAction,
@@ -136,8 +139,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="keep comments (default: on)",
     )
-
-    # Output control
     p.add_argument(
         "--dry-run",
         action="store_true",
@@ -163,7 +164,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="always write, even if the output directory already exists",
     )
-
     # Config / formatting
     p.add_argument(
         "--config",
@@ -183,8 +183,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="black",
         help="formatter used by --format (default: black)",
     )
-
-    # Logging
     p.add_argument(
         "--log-level",
         default="INFO",
@@ -196,7 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level, args.log_file)
     try:
@@ -224,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
             progress=args.progress,
             copy_data=args.copy_data,
             data_glob=tuple(args.data_glob),
+            embed_data=args.embed_data,
             entry_keep_all=args.entry_keep_all,
             main_name=args.main_name,
             generate_guard=args.generate_guard,
@@ -231,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConsolidationError as exc:
         logger.error("{}", exc)
         return 2
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.exception("Unexpected failure")
         return 1
 
@@ -259,12 +258,15 @@ def main(argv: list[str] | None = None) -> int:
             result.modules,
             result.exports,
         )
+
     if result.copied_data_files:
         logger.info("Copied {} data file(s)", len(result.copied_data_files))
+    if result.embedded_data_files:
+        logger.info("Embedded {} data file(s)", len(result.embedded_data_files))
     if result.skipped:
         logger.error("{} file(s) skipped because of errors", len(result.skipped))
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

@@ -44,7 +44,7 @@ The result has a fixed layout:
 ```python
 """Consolidated from ``shop`` by pyrefactor (generated file)."""
 
-import json                      # merged, pruned, sorted imports
+import json  # merged, pruned, sorted imports
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -56,15 +56,19 @@ TAX = 0.2
 # Classes
 # ---------------------------------------------------------------------------
 
+
 class Cart: ...
+
 
 # ---------------------------------------------------------------------------
 # Functions
 # ---------------------------------------------------------------------------
 
-def total(): ...                 # from cart (first module alphabetically)
 
-def pricing_total(): ...         # renamed: same name, different body
+def total(): ...  # from cart (first module alphabetically)
+
+
+def pricing_total(): ...  # renamed: same name, different body
 ```
 
 A section header is only written when the section has content. A block that

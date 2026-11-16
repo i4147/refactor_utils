@@ -67,13 +67,15 @@ INFO | Renamed 2:__version__ -> __m2_version__
 ```
 
 ```python
-class Tokenizer: ...           # from 1.py
+class Tokenizer: ...  # from 1.py
 
-class m2_Encoding: ...         # from 2.py
 
-class m2_Tokenizer:            # from 2.py
+class m2_Encoding: ...  # from 2.py
+
+
+class m2_Tokenizer:  # from 2.py
     def encode(self, text):
-        return m2_Encoding(...)    # reference rewritten
+        return m2_Encoding(...)  # reference rewritten
 ```
 
 Before this rule existed the second class was written as

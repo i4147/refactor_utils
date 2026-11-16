@@ -26,8 +26,8 @@ try:
 except ConsolidationError as exc:
     raise SystemExit(f"failed: {exc}")
 
-print(result.files)       # [PosixPath('output/mypackage.py')]
-print(result.exports)     # number of public names
+print(result.files)  # [PosixPath('output/mypackage.py')]
+print(result.exports)  # number of public names
 for module, old, new in result.plan.renamed:
     print(f"{module}: {old} -> {new}")
 ```
@@ -82,7 +82,7 @@ The code is never executed or imported.
 ```python
 from refactor_utils import ConsolidationError, validate_syntax
 
-validate_syntax("x = 1\n")                      # ok
+validate_syntax("x = 1\n")  # ok
 
 try:
     validate_syntax("class 2_Tokenizer:\n    pass\n", "result.py")
@@ -102,8 +102,8 @@ name:
 ```python
 from refactor_utils.resolver import is_valid_identifier, make_identifier
 
-make_identifier("2")         # 'm2'
-make_identifier("my-mod")    # 'my_mod'
-make_identifier("class")     # 'class_'
-is_valid_identifier("2_x")   # False
+make_identifier("2")  # 'm2'
+make_identifier("my-mod")  # 'my_mod'
+make_identifier("class")  # 'class_'
+is_valid_identifier("2_x")  # False
 ```

@@ -2,24 +2,16 @@
 
 This directory contains example data files that demonstrate proper handling of project data during consolidation.
 
-When `pyrefactor` processes a project, it automatically discovers and preserves data files alongside Python code:
+When `pyrefactor` processes a project, it discovers data files alongside Python code and can either copy them to the output directory, embed them in the generated `.py` file, or both.
 
-- **Discovered via**: `discovery.py` → `discover_data_files()`
-- **Copied to**: output directory preserving relative paths
-- **Controlled by**: `--copy-data` / `--no-copy-data` / `--data-glob`
+## Discovery
 
-## Files
+- Discovered via `discovery.py` → `discover_data_files()`
+- Controlled by `--copy-data` / `--no-copy-data` / `--data-glob`
 
-- `sample.json` - Example JSON data (common for configs)
-- `example.csv` - Example CSV data (common for datasets)
-- `config.ini` - Example INI config
+## Copying
 
-These files are automatically copied when running:
+When `--copy-data` is enabled (default) files are written to the output directory preserving their relative paths.
 
 ```bash
 pyrefactor src/refactor_utils -o output --copy-data
-# or
-pyrefactor src/refactor_utils -o output --data-glob "*.json"
-```
-
-See main README.md for full data handling documentation.
