@@ -98,9 +98,7 @@ def detect_base(root: Path) -> Path:
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"
-    if src.is_dir() and any(
-        p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()
-    ):
+    if src.is_dir() and any(p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()):
         return src
     return root
 
@@ -156,9 +154,7 @@ def _is_excluded(
     if default_hit:
         # Allow include to rescue it
         if include and _matches(rel, posix, name, include):
-            logger.debug(
-                "Re-included {} via --include (overrode default exclude)", path
-            )
+            logger.debug("Re-included {} via --include (overrode default exclude)", path)
             return False
         logger.debug("Skipping {} (default exclude)", path)
         return True
@@ -203,9 +199,7 @@ def _walk(
             try:
                 target = entry.resolve()
                 # Avoid output-inside-source infinite loops
-                if target in skip or any(
-                    str(target).startswith(str(s) + os.sep) for s in skip
-                ):
+                if target in skip or any(str(target).startswith(str(s) + os.sep) for s in skip):
                     continue
             except OSError:
                 logger.warning("Broken symlink skipped: {}", entry)

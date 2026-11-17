@@ -20,9 +20,7 @@ from .models import (
 )
 
 _LOCAL = threading.local()
-_MAIN_RE = re.compile(
-    r"""^\s*(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)\s*$"""
-)
+_MAIN_RE = re.compile(r"""^\s*(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)\s*$""")
 _TC_NAMES = {
     "TYPE_CHECKING",
     "typing.TYPE_CHECKING",
@@ -84,9 +82,7 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
     return ".".join(base + ([rest] if rest else []))
 
 
-def parse_import(
-    node: Node, module: str, is_pkg: bool, type_checking: bool = False
-) -> list[ImportSpec]:
+def parse_import(node: Node, module: str, is_pkg: bool, type_checking: bool = False) -> list[ImportSpec]:
     specs: list[ImportSpec] = []
     if node.type == "import_statement":
         for ch in node.children_by_field_name("name"):
@@ -108,9 +104,7 @@ def parse_import(
     elif mod_node is not None and mod_node.type == "relative_import":
         prefix = next((c for c in mod_node.children if c.type == "import_prefix"), None)
         level = len(_t(prefix))
-        rest = next(
-            (_t(c) for c in mod_node.named_children if c.type == "dotted_name"), ""
-        )
+        rest = next((_t(c) for c in mod_node.named_children if c.type == "dotted_name"), "")
         mod = _resolve_relative(module, is_pkg, level, rest)
         relative = True
     else:
@@ -186,9 +180,7 @@ def _param_names(params: Node | None) -> set[str]:
     return names
 
 
-def _push_param_exprs(
-    stack: list, params: Node | None, lazy: bool, shadow: frozenset[str]
-) -> None:
+def _push_param_exprs(stack: list, params: Node | None, lazy: bool, shadow: frozenset[str]) -> None:
     if params is None:
         return
     for ch in params.named_children:
@@ -254,9 +246,7 @@ def _bound_names(node: Node) -> list[str]:
             if t in ("function_definition", "class_definition"):
                 names.append(_t(ch.child_by_field_name("name")))
             elif t == "decorated_definition":
-                names.append(
-                    _t(ch.child_by_field_name("definition").child_by_field_name("name"))
-                )
+                names.append(_t(ch.child_by_field_name("definition").child_by_field_name("name")))
             elif t == "expression_statement" and ch.named_children:
                 e = ch.named_children[0]
                 if e.type in ("assignment", "augmented_assignment"):
@@ -300,11 +290,7 @@ def _extent(node: Node) -> tuple[int, int]:
         start, row = prev.start_byte, prev.start_point[0]
         prev = prev.prev_sibling
     nxt = node.next_sibling
-    if (
-        nxt is not None
-        and nxt.type == "comment"
-        and nxt.start_point[0] == node.end_point[0]
-    ):
+    if nxt is not None and nxt.type == "comment" and nxt.start_point[0] == node.end_point[0]:
         end = nxt.end_byte
     return start, end
 
@@ -369,9 +355,7 @@ def _detect_dynamic_patterns(text: str, info: ModuleInfo) -> None:
                     f"{info.module}: uses {name} for dynamic imports — consolidation may miss dependencies"
                 )
             elif name in ("globals", "locals", "eval", "exec", "getattr"):
-                info.warnings.append(
-                    f"{info.module}: uses {name}() — name resolution may be incomplete"
-                )
+                info.warnings.append(f"{info.module}: uses {name}() — name resolution may be incomplete")
             elif name in ("__getattr__", "__dir__", "monkeypatch"):
                 info.warnings.append(
                     f"{info.module}: defines/uses {name} — module-level attribute access may change semantics"
@@ -387,12 +371,7 @@ def _detect_runtime_semantics(text: str, info: ModuleInfo) -> None:
                 info.warnings.append(
                     f"{info.module}: uses {sym} — semantics change in consolidated file (now points at _consolidated.py)"
                 )
-    if (
-        "importlib.resources" in text
-        or "pkg_resources" in text
-        or "open(" in text
-        and "__file__" in text
-    ):
+    if "importlib.resources" in text or "pkg_resources" in text or "open(" in text and "__file__" in text:
         info.warnings.append(
             f"{info.module}: does resource loading relative to __file__ — verify output handles bundled resources"
         )
@@ -406,11 +385,7 @@ def _strip_docstring_from_source(src: bytes) -> bytes:
         # Find docstring nodes and remove them via line intervals
         lines = text.splitlines()
         # Simple approach: if first statement is Expr(Str), remove it
-        if (
-            tree.body
-            and isinstance(tree.body[0], ast.Expr)
-            and isinstance(tree.body[0].value, (ast.Constant, ast.Str))
-        ):
+        if tree.body and isinstance(tree.body[0], ast.Expr) and isinstance(tree.body[0].value, (ast.Constant, ast.Str)):
             # docstring found
             node = tree.body[0]
             start = (node.lineno or 1) - 1
@@ -448,16 +423,12 @@ def _strip_comments_from_source(src: bytes) -> bytes:
         return src
 
 
-def _collect_occs(
-    root: Node, base: int, src: bytes, own_def: Node | None, info: ModuleInfo
-) -> list[Occ]:
+def _collect_occs(root: Node, base: int, src: bytes, own_def: Node | None, info: ModuleInfo) -> list[Occ]:
     occs: list[Occ] = []
     own_id = own_def.id if own_def is not None else None
     future = info.future_annotations
     warned_file = False
-    stack: list[tuple[Node, bool, frozenset[str], bool]] = [
-        (root, False, frozenset(), False)
-    ]
+    stack: list[tuple[Node, bool, frozenset[str], bool]] = [(root, False, frozenset(), False)]
     while stack:
         node, lazy, shadow, cls = stack.pop()
         t = node.type
@@ -466,15 +437,9 @@ def _collect_occs(
             if name in shadow:
                 continue
             if name == "__file__" and not warned_file:
-                info.warnings.append(
-                    f"{info.module}: uses __file__, which now points at the consolidated file"
-                )
+                info.warnings.append(f"{info.module}: uses __file__, which now points at the consolidated file")
                 warned_file = True
-            occs.append(
-                Occ(
-                    node.start_byte - base, node.end_byte - base, name, "name", not lazy
-                )
-            )
+            occs.append(Occ(node.start_byte - base, node.end_byte - base, name, "name", not lazy))
             continue
         if t == "attribute":
             obj = node.child_by_field_name("object")
@@ -587,9 +552,7 @@ def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
     if e.type in ("assignment", "augmented_assignment"):
         names = _target_names(e)
         if names == ["__all__"]:
-            info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                _t(e.child_by_field_name("right"))
-            )
+            info.declared_all = (info.declared_all or []) + _STR_RE.findall(_t(e.child_by_field_name("right")))
             return True
         return False
     if e.type == "call":
@@ -602,9 +565,7 @@ def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
                     for arg in args.named_children if args is not None else ():
                         if arg.type == "argument_list":  # pragma: no cover - defensive
                             continue
-                        info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                            _t(arg)
-                        )
+                        info.declared_all = (info.declared_all or []) + _STR_RE.findall(_t(arg))
                     info.warnings.append(
                         f"{info.module}: mutated __all__ ('{method}') — static analysis "
                         "may be incomplete; exported names are recomputed from definitions"
@@ -632,8 +593,7 @@ def _is_bare_string(node: Node | None) -> bool:
 
 def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
     info.future_annotations = any(
-        n.type == "future_import_statement" and b"annotations" in n.text
-        for n in root.named_children
+        n.type == "future_import_statement" and b"annotations" in n.text for n in root.named_children
     )
     by_name: dict[str, Block] = {}
 
@@ -655,9 +615,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             for occ in occs:
                 occ.start = remap(occ.start)
                 occ.end = remap(occ.end)
-        block = Block(
-            info.module, kind, list(names), raw_source, occs, len(info.blocks)
-        )
+        block = Block(info.module, kind, list(names), raw_source, occs, len(info.blocks))
         block.orig_path = info.path
         block.start_line = start_line
         block.end_line = end_line
@@ -685,15 +643,9 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             if ch.type == "comment":
                 continue
             if ch.type in _IMPORT_TYPES:
-                info.imports.extend(
-                    parse_import(ch, info.module, info.is_pkg, type_checking=True)
-                )
+                info.imports.extend(parse_import(ch, info.module, info.is_pkg, type_checking=True))
             elif ch.type in _DEF_TYPES:
-                d = (
-                    ch.child_by_field_name("definition")
-                    if ch.type == "decorated_definition"
-                    else ch
-                )
+                d = ch.child_by_field_name("definition") if ch.type == "decorated_definition" else ch
                 kind = CLASS if d.type == "class_definition" else FUNC
                 add(kind, [_t(d.child_by_field_name("name"))], ch, own=d, dedent=True)
             elif ch.type == "expression_statement":
@@ -720,11 +672,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
         if t in _IMPORT_TYPES:
             info.imports.extend(parse_import(n, info.module, info.is_pkg))
         elif t in _DEF_TYPES:
-            d = (
-                n.child_by_field_name("definition")
-                if t == "decorated_definition"
-                else n
-            )
+            d = n.child_by_field_name("definition") if t == "decorated_definition" else n
             kind = CLASS if d.type == "class_definition" else FUNC
             add(kind, [_t(d.child_by_field_name("name"))], n, own=d)
         elif t == "expression_statement":
@@ -754,14 +702,8 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
                     add_type_checking(n)
                     continue
                 # Detect conditional/platform/optional imports
-                if (
-                    "sys.platform" in cond
-                    or "sys.version" in cond
-                    or "TYPE_CHECKING" in cond
-                ):
-                    info.warnings.append(
-                        f"{info.module}: conditional import guarded by '{cond.strip()}' kept verbatim"
-                    )
+                if "sys.platform" in cond or "sys.version" in cond or "TYPE_CHECKING" in cond:
+                    info.warnings.append(f"{info.module}: conditional import guarded by '{cond.strip()}' kept verbatim")
             imports, has_def = _scan(n)
             is_try_guard = (
                 imports
@@ -774,11 +716,7 @@ def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
             )
             if is_try_guard:
                 start, end = _extent(n)
-                specs = [
-                    s
-                    for imp in imports
-                    for s in parse_import(imp, info.module, info.is_pkg)
-                ]
+                specs = [s for imp in imports for s in parse_import(imp, info.module, info.is_pkg)]
                 info.guards.append(
                     GuardBlock(
                         src[start:end].decode("utf-8", "replace"),
@@ -824,13 +762,9 @@ def parse_module_file(
     try:
         text_probe = src.decode("utf-8")
         if "\r" in text_probe:
-            info.warnings.append(
-                f"{path_str}: contains CRLF line endings — normalized to LF in output"
-            )
+            info.warnings.append(f"{path_str}: contains CRLF line endings — normalized to LF in output")
     except UnicodeDecodeError:
-        info.warnings.append(
-            f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters"
-        )
+        info.warnings.append(f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters")
     try:
         root = _get_parser().parse(src).root_node
         if root.has_error:

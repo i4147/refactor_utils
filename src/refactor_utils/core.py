@@ -45,7 +45,7 @@ class ConsolidationResult:
 
 
 def _parse_worker(args):
-    (path_str, module, is_pkg, keep_docstrings, strip_comments, keep_comments) = args
+    path_str, module, is_pkg, keep_docstrings, strip_comments, keep_comments = args
     info = parse_module_file(
         path_str,
         module,
@@ -87,9 +87,7 @@ def _parse_all(
 
             return tqdm(iterator, total=total, desc="Parsing")
         except ImportError:
-            logger.info(
-                "Progress bar requested but tqdm not installed — falling back to log"
-            )
+            logger.info("Progress bar requested but tqdm not installed — falling back to log")
             return iterator
 
     def run_pool(pool_cls, todo):
@@ -115,11 +113,7 @@ def _parse_all(
                 src = futures[fut]
                 try:
                     res = fut.result()
-                    if (
-                        isinstance(res, tuple)
-                        and len(res) == 2
-                        and isinstance(res[1], ModuleInfo)
-                    ):
+                    if isinstance(res, tuple) and len(res) == 2 and isinstance(res[1], ModuleInfo):
                         results[res[0]] = res[1]
                     else:
                         results[src.module] = res
@@ -160,9 +154,7 @@ def _load_config_file(config_path, source):
         try:
             import tomli as tomllib  # type: ignore
         except ImportError:
-            logger.warning(
-                "tomllib/tomli not available — cannot read config {}", config_path
-            )
+            logger.warning("tomllib/tomli not available — cannot read config {}", config_path)
             return {}
     try:
         with open(config_path, "rb") as f:
@@ -194,13 +186,9 @@ def validate_syntax(text, filename="<consolidated>"):
                 line = lines[exc.lineno - 1].strip()
         where = f"line {exc.lineno}" if exc.lineno else "unknown line"
         detail = f": {line!r}" if line else ""
-        raise ConsolidationError(
-            f"generated {filename} is not valid python: {exc.msg} ({where}){detail}"
-        ) from exc
+        raise ConsolidationError(f"generated {filename} is not valid python: {exc.msg} ({where}){detail}") from exc
     except ValueError as exc:
-        raise ConsolidationError(
-            f"generated {filename} is not valid python: {exc}"
-        ) from exc
+        raise ConsolidationError(f"generated {filename} is not valid python: {exc}") from exc
 
 
 def consolidate(
@@ -259,9 +247,7 @@ def consolidate(
         embed_data = copy_data
 
     if main_name is not None and not is_valid_identifier(main_name):
-        raise ConsolidationError(
-            f"--main-name {main_name!r} is not a valid python identifier"
-        )
+        raise ConsolidationError(f"--main-name {main_name!r} is not a valid python identifier")
 
     source, output = Path(source), Path(output)
     if not source.exists():
@@ -285,11 +271,7 @@ def consolidate(
         data_files = [
             df
             for df in data_files
-            if any(
-                fnmatch.fnmatch(df.relative, pat)
-                or fnmatch.fnmatch(Path(df.path).name, pat)
-                for pat in data_glob
-            )
+            if any(fnmatch.fnmatch(df.relative, pat) or fnmatch.fnmatch(Path(df.path).name, pat) for pat in data_glob)
         ]
     if not files:
         raise ConsolidationError(f"no python files found under {source}")
@@ -427,9 +409,7 @@ def consolidate(
             len(plan.renamed),
         )
         for df in data_files:
-            logger.info(
-                "Would copy data file {} -> {}/{}", df.path, output, df.relative
-            )
+            logger.info("Would copy data file {} -> {}/{}", df.path, output, df.relative)
         if embedded:
             logger.info("Would embed {} data file(s)", len(embedded))
         return ConsolidationResult(

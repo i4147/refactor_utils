@@ -256,9 +256,7 @@ def test_export_sorting_private_names_first():
 
     plan = Plan([], "", "", [])
     names = ["zebra", "_lead", "Apple"]
-    plan.exports["functions"] = sorted(
-        names, key=__import__("refactor_utils.imports", fromlist=["sort_key"]).sort_key
-    )
+    plan.exports["functions"] = sorted(names, key=__import__("refactor_utils.imports", fromlist=["sort_key"]).sort_key)
     assert plan.exports["functions"] == ["_lead", "Apple", "zebra"]
 
 
@@ -421,10 +419,7 @@ def test_self_consolidation_compiles_and_imports(tmp_path: Path):
     tree = ast.parse(text)
     compile(text, "gen.py", "exec")
     bound = [
-        target.id
-        for node in ast.walk(tree)
-        for target in getattr(node, "targets", [])
-        if isinstance(target, ast.Name)
+        target.id for node in ast.walk(tree) for target in getattr(node, "targets", []) if isinstance(target, ast.Name)
     ]
     assert "__all__" not in bound
 
@@ -558,11 +553,7 @@ def test_multiple_main_guards_are_merged_into_one_block(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     text = (tmp_path / "output" / f"{tmp_path.name}.py").read_text()
     tree = ast.parse(text)
-    guards = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.If) and "__main__" in ast.dump(node.test)
-    ]
+    guards = [node for node in tree.body if isinstance(node, ast.If) and "__main__" in ast.dump(node.test)]
     # stacked guards would mean everything but the first is dead code
     assert len(guards) == 1
     assert "# from a" in text and "# from b" in text
@@ -592,9 +583,7 @@ def test_merged_guard_runs_every_entry_point(tmp_path: Path):
     result = run_cli(tmp_path, "pkg", "--no-copy-data")
     assert result.returncode == 0, result.stderr
     generated = tmp_path / "output" / f"{tmp_path.name}.py"
-    run = subprocess.run(
-        [sys.executable, str(generated)], capture_output=True, text=True
-    )
+    run = subprocess.run([sys.executable, str(generated)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     assert run.stdout.split() == ["first", "ran", "second", "ran"]
 

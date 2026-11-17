@@ -98,9 +98,7 @@ def _format_with_black(text):
 
 def _format_with_ruff(text):
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
             tmp.write(text)
             tmp_path = tmp.name
         subprocess.run(["ruff", "format", tmp_path], capture_output=True, timeout=5)
@@ -134,9 +132,7 @@ def render_consolidated(
     formatter="black",
     embedded_data=None,
 ):
-    parts = [
-        f'"""Consolidated from ``{source_name}`` by pyrefactor (generated file)."""'
-    ]
+    parts = [f'"""Consolidated from ``{source_name}`` by pyrefactor (generated file)."""']
     head = []
     if plan.future_names:
         head.append(future_section(plan.future_names))
@@ -167,11 +163,7 @@ def render_consolidated(
         prev = blk
 
     if plan.all_export:
-        body.append(
-            "\n\n\n__all__ = [\n"
-            + "".join(f"    {n!r},\n" for n in plan.all_export)
-            + "]"
-        )
+        body.append("\n\n\n__all__ = [\n" + "".join(f"    {n!r},\n" for n in plan.all_export) + "]")
 
     parts.append("".join(body))
     head_text = "\n\n\n".join(p for p in parts[1:] if p)

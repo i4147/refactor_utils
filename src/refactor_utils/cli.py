@@ -12,15 +12,10 @@ from .logging_setup import setup_logging
 def build_parser():
     p = argparse.ArgumentParser(
         prog="pyrefactor",
-        description=(
-            "Consolidate a python module/package/project into a single, "
-            "dependency-ordered file."
-        ),
+        description=("Consolidate a python module/package/project into a single, " "dependency-ordered file."),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    p.add_argument(
-        "source", type=Path, help="package directory, project root or single .py file"
-    )
+    p.add_argument("source", type=Path, help="package directory, project root or single .py file")
     p.add_argument(
         "-o",
         "--output",
@@ -32,10 +27,7 @@ def build_parser():
         "--name",
         default=None,
         metavar="NAME",
-        help=(
-            "name of the generated file\n"
-            "(default: the current directory name, e.g. output/<cwd>.py)"
-        ),
+        help=("name of the generated file\n" "(default: the current directory name, e.g. output/<cwd>.py)"),
     )
     p.add_argument(
         "-j",
@@ -50,9 +42,7 @@ def build_parser():
         default="process",
         help="executor type for parallel parsing (default: process)",
     )
-    p.add_argument(
-        "--progress", action="store_true", help="show progress bar during parsing"
-    )
+    p.add_argument("--progress", action="store_true", help="show progress bar during parsing")
     # Discovery / filtering
     p.add_argument(
         "-x",
@@ -60,10 +50,7 @@ def build_parser():
         action="append",
         default=[],
         metavar="GLOB",
-        help=(
-            "extra path glob to skip (repeatable)\n"
-            "precedence: default excludes < --include < --exclude"
-        ),
+        help=("extra path glob to skip (repeatable)\n" "precedence: default excludes < --include < --exclude"),
     )
     p.add_argument(
         "--include",
@@ -82,10 +69,7 @@ def build_parser():
         "--embed-data",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help=(
-            "embed data files in the consolidated output as a _DATA_FILES dict\n"
-            "(default: same as --copy-data)"
-        ),
+        help=("embed data files in the consolidated output as a _DATA_FILES dict\n" "(default: same as --copy-data)"),
     )
     p.add_argument(
         "--data-glob",
@@ -122,10 +106,7 @@ def build_parser():
         "--imports",
         choices=["prune", "keep", "strict"],
         default="prune",
-        help=(
-            "import handling: prune (default, drop unused), keep (keep all),\n"
-            "strict (prune and warn on unused)"
-        ),
+        help=("import handling: prune (default, drop unused), keep (keep all),\n" "strict (prune and warn on unused)"),
     )
     p.add_argument(
         "--keep-docstrings",
