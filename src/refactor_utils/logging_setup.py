@@ -4,6 +4,7 @@ Replaces the former ``loguru`` dependency with a thin stdlib-``logging``
 shim that keeps the same call surface used across the package
 (``logger.info("x {}", val)``, ``logger.success(...)``, ``logger.exception``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,7 +47,9 @@ class _ShimLogger:
     def __init__(self, inner: logging.Logger) -> None:
         self._inner = inner
 
-    def _log(self, level: int, message: object, args: tuple, exc_info: bool = False) -> None:
+    def _log(
+        self, level: int, message: object, args: tuple, exc_info: bool = False
+    ) -> None:
         self._inner.log(level, _fmt_message(message, args), exc_info=exc_info)
 
     def trace(self, message: object, *args: object) -> None:
@@ -78,16 +81,16 @@ class _ShimLogger:
             if not isinstance(handler, logging.NullHandler):
                 self._inner.removeHandler(handler)
 
-    def add(self, sink, level: str = "DEBUG", rotation=None, enqueue=False, format=None):
+    def add(
+        self, sink, level: str = "DEBUG", rotation=None, enqueue=False, format=None
+    ):
         """Register a sink (path-like or stream). Rotation/enqueue ignored."""
         if isinstance(sink, (str, bytes)) or hasattr(sink, "__fspath__"):
             handler: logging.Handler = logging.FileHandler(sink, encoding="utf-8")
         else:
             handler = logging.StreamHandler(sink)
         handler.setLevel(_LEVELS.get(str(level).upper(), logging.DEBUG))
-        handler.setFormatter(
-            logging.Formatter(format or _FMT, datefmt=_DATEFMT)
-        )
+        handler.setFormatter(logging.Formatter(format or _FMT, datefmt=_DATEFMT))
         self._inner.addHandler(handler)
         return handler
 
@@ -108,7 +111,9 @@ def setup_logging(level: str = "INFO", log_file=None) -> None:
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(logging.Formatter(_FMT, datefmt=_DATEFMT))
     stream.setLevel(_LEVELS.get(str(level).upper(), logging.INFO))
-    logger._inner.setLevel(min(logging.DEBUG, _LEVELS.get(str(level).upper(), logging.INFO)))
+    logger._inner.setLevel(
+        min(logging.DEBUG, _LEVELS.get(str(level).upper(), logging.INFO))
+    )
     logger._inner.addHandler(stream)
     if log_file is not None:
         logger.add(log_file, level="DEBUG")

@@ -1,15 +1,17 @@
 """Data models shared across the consolidator.
 
-NOTE: every dataclass below declares its fields with full annotations.
-A previous revision lost the annotations, which silently turned all
-``field(...)`` defaults into plain class attributes and made the dataclasses
-accept zero constructor arguments (every ``ImportSpec(...)``, ``Block(...)``,
-``ConsolidationResult(...)`` call crashed).
+The 3.x series is built on **libcst**: blocks hold their concrete-syntax-tree
+statement nodes instead of raw source bytes with byte-offset occurrences.
+Rewrites are node-level CST transformations, so there is no offset bookkeeping
+left to get out of sync.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import libcst as cst
 
 # Block kinds
 CONST = "const"
@@ -40,14 +42,19 @@ class ImportSpec:
         return self.alias or self.module.split(".")[0]
 
 
-@dataclass(slots=True)
-class Occ:
-    """A reference inside a block source that may need rewriting."""
+@dataclass
+class Ref:
+    """A reference inside a block that may need rewriting or ordering.
 
-    start: int
-    end: int
+    ``kind`` is ``"name"`` (a bare identifier), ``"attr"`` (the attribute of a
+    dotted chain rooted at ``obj``) or ``"nested_import"`` (an import statement
+    inside the block). ``eager`` marks references that evaluate at import time
+    (module level, class bodies, decorators, parameter defaults) and therefore
+    constrain the emit order.
+    """
+
     name: str
-    kind: str  # "name" | "attr" | "nested_import"
+    kind: str
     eager: bool = True
     obj: str = ""
     specs: tuple[ImportSpec, ...] = ()
@@ -55,31 +62,41 @@ class Occ:
 
 @dataclass(eq=False)
 class Block:
-    """A contiguous chunk of a module (class, function, const, ...)."""
+    """A chunk of a module (class, function, const, ...).
+
+    ``nodes`` holds the libcst statement nodes that make up the block,
+    including their ``leading_lines`` so attached comments and blank lines
+    travel with the block.
+    """
 
     module: str
     kind: str
     names: list[str]
-    source: bytes
-    occs: list[Occ] = field(default_factory=list)
+    nodes: list = field(default_factory=list)
+    refs: list[Ref] = field(default_factory=list)
     order: int = 0
     bid: int = -1
     orig_path: str = ""
     start_line: int = 0
     end_line: int = 0
-    stripped_docstring: bool = False
 
     @property
     def primary(self) -> str:
         return self.names[0] if self.names else ""
 
+    def code(self) -> str:
+        """Rendered source of the block (lossless, incl. leading comments)."""
+        if not self.nodes:
+            return ""
+        return cst.Module(body=list(self.nodes)).code
+
+    @property
+    def source(self) -> bytes:
+        return self.code().encode("utf-8")
+
     def merge(self, other: Block) -> None:
-        shift = len(self.source) + 1
-        for occ in other.occs:
-            occ.start += shift
-            occ.end += shift
-        self.source += b"\n" + other.source
-        self.occs.extend(other.occs)
+        self.nodes.extend(other.nodes)
+        self.refs.extend(other.refs)
         for name in other.names:
             if name not in self.names:
                 self.names.append(name)

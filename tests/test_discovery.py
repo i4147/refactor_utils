@@ -70,9 +70,7 @@ def test_data_files_relative_to_source_root(make_project):
 
 
 def test_data_files_in_project_layout_keep_package_prefix(make_project):
-    src = make_project(
-        {**PROJ, "pkg/data/cfg.json": "{}\n"}, root_name="proj2"
-    )
+    src = make_project({**PROJ, "pkg/data/cfg.json": "{}\n"}, root_name="proj2")
     rels = {d.relative for d in discover_data_files(src)}
     assert "pkg/data/cfg.json" in rels
 

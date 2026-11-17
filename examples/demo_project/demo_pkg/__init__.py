@@ -7,6 +7,7 @@ identical duplicated function (deduplicated), and data files that are
 loaded from disk in package mode and from embedded resources in
 consolidated mode.
 """
+
 from .core import Person, greet
 from .helpers import UTIL, helper, shared
 

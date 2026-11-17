@@ -9,6 +9,7 @@ It consolidates the demo package with ``--embed-data`` (text data as plain
 text, the fake font as base64), then proves the consolidated file is a
 drop-in replacement for the package and shows the resource accessor API.
 """
+
 import importlib.util
 import json
 import subprocess
@@ -105,8 +106,10 @@ def main():
         assert proc.returncode == 0, proc.stderr
 
         print("\n== 5. equivalent CLI invocation ==")
-        print("  $ pyrefactor examples/demo_project/demo_pkg -o dist "
-              "--embed-data --no-copy-data")
+        print(
+            "  $ pyrefactor examples/demo_project/demo_pkg -o dist "
+            "--embed-data --no-copy-data"
+        )
 
     print("\nAll demo checks passed.")
 

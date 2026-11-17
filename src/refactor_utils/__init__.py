@@ -1,4 +1,5 @@
 """pyrefactor — consolidate a python package into a single-file equivalent."""
+
 from .core import (
     ConsolidationError,
     ConsolidationResult,
@@ -7,7 +8,7 @@ from .core import (
 )
 from .resolver import Plan
 
-__version__ = "2.1.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "ConsolidationError",

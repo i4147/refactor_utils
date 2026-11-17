@@ -1,4 +1,5 @@
 """Command line interface."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,8 +15,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="pyrefactor",
         description=(
-            "Consolidate a python module/package/project into a single, "
-            "dependency-ordered file."
+            "Consolidate a python module/package/project into a single, dependency-ordered file."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -34,8 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="NAME",
         help=(
-            "name of the generated file\n"
-            "(default: the source name, e.g. output/<source>.py)"
+            "name of the generated file\n(default: the source name, e.g. output/<source>.py)"
         ),
     )
     p.add_argument(
@@ -62,8 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="GLOB",
         help=(
-            "extra path glob to skip (repeatable)\n"
-            "precedence: default excludes < --include < --exclude"
+            "extra path glob to skip (repeatable)\nprecedence: default excludes < --include < --exclude"
         ),
     )
     p.add_argument(
@@ -126,8 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["prune", "keep", "strict"],
         default="prune",
         help=(
-            "import handling: prune (default, drop unused), keep (keep all),\n"
-            "strict (prune and warn on unused)"
+            "import handling: prune (default, drop unused), keep (keep all),\nstrict (prune and warn on unused)"
         ),
     )
     p.add_argument(

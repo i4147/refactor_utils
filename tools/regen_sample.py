@@ -37,7 +37,9 @@ def generate() -> tuple[str, list[tuple[str, str, str]]]:
         # An empty config keeps the repository's own [tool.pyrefactor] out.
         cfg = Path(tmp) / "pyproject.toml"
         cfg.write_text("", encoding="utf-8")
-        result = consolidate(src, out, filename="result", workers=1, copy_data=False, config=cfg)
+        result = consolidate(
+            src, out, filename="result", workers=1, copy_data=False, config=cfg
+        )
         text = (out / "result.py").read_text(encoding="utf-8")
     return text, list(result.plan.renamed)
 
@@ -53,7 +55,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         current = TARGET.read_text(encoding="utf-8") if TARGET.is_file() else None
         if current != text:
-            print(f"{TARGET.relative_to(ROOT)} is out of date; run tools/regen_sample.py")
+            print(
+                f"{TARGET.relative_to(ROOT)} is out of date; run tools/regen_sample.py"
+            )
             return 1
         print(f"{TARGET.relative_to(ROOT)} is up to date")
         return 0

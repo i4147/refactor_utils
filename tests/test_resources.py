@@ -1,4 +1,5 @@
 """Data-embedding tests: text as plain text, binary as base64."""
+
 import base64
 import json
 

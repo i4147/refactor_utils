@@ -17,7 +17,8 @@ pyrefactor src/my_pkg -o dist --check    # CI mode: fail if the output would cha
    plus data files (json/yaml/ini/csv/... and extension-less names like `LICENSE`).
 2. **Parses** every module with tree-sitter, splitting it into blocks
    (constants, classes, functions, `__main__` guards, conditional import guards)
-   and recording every name reference with its byte range.
+   and recording every name reference with full scope awareness
+   (parameters, loop/with/except/walrus/match bindings shadow module names).
 3. **Resolves** internal imports: `from .core import Person` becomes a direct
    reference to the definition. External imports are pruned to only what is
    actually used (`--imports keep|prune|strict`), and name collisions between
@@ -43,10 +44,10 @@ file:
 The generated module then exposes:
 
 ```python
-get_resource("data/settings.json")   # -> str (text) or bytes (binary)
+get_resource("data/settings.json")  # -> str (text) or bytes (binary)
 get_resource("data/settings.json", encoding="utf-8")  # force str/bytes conversion
-list_resources()                     # sorted names of embedded resources
-with resource_path("assets/logo.ttf") as path:   # real temp-file path
+list_resources()  # sorted names of embedded resources
+with resource_path("assets/logo.ttf") as path:  # real temp-file path
     font = ImageFont.truetype(path, 24)
 ```
 
@@ -57,9 +58,12 @@ accessor if present and fall back to a file path otherwise:
 def load_settings():
     try:
         import json
-        return json.loads(get_resource("data/settings.json"))   # consolidated file
+
+        return json.loads(get_resource("data/settings.json"))  # consolidated file
     except NameError:
-        return json.loads((Path(__file__).parent / "data" / "settings.json").read_text())
+        return json.loads(
+            (Path(__file__).parent / "data" / "settings.json").read_text()
+        )
 ```
 
 See `examples/demo_project` and `examples/run_demo.py` for a complete, runnable
@@ -76,10 +80,10 @@ result = consolidate(
     embed_data=True,
     copy_data=False,
 )
-result.files            # [dist/my_pkg.py]
-result.exports          # number of exported names
-result.embedded_data_files   # resource names embedded in the file
-result.plan.blocks      # rendered blocks with origin comments
+result.files  # [dist/my_pkg.py]
+result.exports  # number of exported names
+result.embedded_data_files  # resource names embedded in the file
+result.plan.blocks  # rendered blocks with origin comments
 ```
 
 Useful flags: `--entry MODULE` (keep only one `__main__` guard), `--main-name`
@@ -101,7 +105,7 @@ data_glob = ["*.json"]
 
 ## Dependencies
 
-`tree-sitter` + `tree-sitter-python` (parsing). Optional: `tqdm` (progress),
+`libcst` (lossless concrete-syntax-tree parsing/rewriting). Optional: `tqdm` (progress),
 `black`/`ruff` (`--format`). Logging uses the standard library only.
 
 ## Development

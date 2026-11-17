@@ -1,4 +1,5 @@
 """Final rendering of the consolidated file."""
+
 from __future__ import annotations
 
 import os
@@ -94,7 +95,9 @@ def render_consolidated(
         first_of_section = blk.section not in seen_sections
         if prev is None or blk.section != prev.section:
             if first_of_section:
-                piece += f"{_RULE}\n# {_TITLES.get(blk.section, blk.section)}\n{_RULE}\n\n\n"
+                piece += (
+                    f"{_RULE}\n# {_TITLES.get(blk.section, blk.section)}\n{_RULE}\n\n\n"
+                )
             sep = "\n\n\n" if prev is not None else ""
         else:
             sep = _sep(prev.kind, blk.kind, prev.text, blk.text)

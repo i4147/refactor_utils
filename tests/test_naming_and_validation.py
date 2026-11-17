@@ -66,7 +66,9 @@ def test_make_identifier(raw, expected):
     assert is_valid_identifier(got)
 
 
-@pytest.mark.parametrize("raw", ["9", "0x", "a-b", "é2", "²", "for", "x y", "💥", "1.5"])
+@pytest.mark.parametrize(
+    "raw", ["9", "0x", "a-b", "é2", "²", "for", "x y", "💥", "1.5"]
+)
 def test_make_identifier_is_always_valid(raw):
     got = make_identifier(raw)
     assert got.isidentifier() and not keyword.iskeyword(got)
@@ -153,7 +155,9 @@ def test_main_name_must_be_an_identifier(tmp_path: Path):
     write_tree(tmp_path / "src", {"a.py": "def main():\n    pass\n"})
     for bad in ("2main", "my-main", "class", ""):
         with pytest.raises(ConsolidationError, match="identifier"):
-            consolidate(tmp_path / "src", tmp_path / "out", filename="gen", main_name=bad)
+            consolidate(
+                tmp_path / "src", tmp_path / "out", filename="gen", main_name=bad
+            )
     assert not (tmp_path / "out").exists()
 
 
@@ -226,7 +230,11 @@ def test_module_docstrings_are_pruned(tmp_path: Path):
     assert "Function docs stay." in text and "Class docs stay." in text
     tree = ast.parse(text)
     assert ast.get_docstring(tree).startswith("Consolidated from")
-    stray = [n for n in tree.body[1:] if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)]
+    stray = [
+        n
+        for n in tree.body[1:]
+        if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+    ]
     assert stray == []
     ns: dict = {}
     exec(compile(text, "gen.py", "exec"), ns)

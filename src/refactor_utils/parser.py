@@ -1,29 +1,27 @@
-"""Tree-sitter based module parser producing blocks and occurrences.
+"""libcst-based module parser producing blocks and references.
 
-Fixes compared to the previous revision:
-* CRLF line endings are actually normalised (previously only warned about),
-  which kept stray ``\\r`` characters out of block sources.
-* Docstrings are stripped on the whole module BEFORE occurrence collection.
-  The old per-block stripping deleted lines without remapping ``Occ`` byte
-  offsets, which corrupted every rewrite when ``--no-keep-docstrings`` was
-  used, and it only removed module-level docstrings, never the ones inside
-  functions/classes.
-* Comment stripping is token-based, so a ``#`` that begins a line inside a
-  multi-line string literal is no longer removed (which used to produce
-  broken string literals).
-* The ``__name__`` semantic warning no longer fires for every module that
-  merely has an ``if __name__ == "__main__":`` guard.
+The 3.x parser replaces the tree-sitter byte-offset approach with a
+concrete-syntax-tree pipeline:
+
+* blocks hold libcst statement nodes; attached comments and blank lines live
+  in the statement's ``leading_lines`` and therefore travel with the block
+  automatically (no manual ``_extent``-style comment pulling);
+* all rewrites happen later as node-level CST transformations, so there are
+  no byte offsets that could get out of sync when docstrings or comments are
+  stripped — the old class of corruption bugs is gone by construction;
+* bindings (``for``/``with``/``except`` targets, walrus, match captures,
+  comprehension targets) are scoped correctly instead of being rewritten as
+  if they were references.
 """
+
 from __future__ import annotations
 
-import io
+import ast
 import re
-import threading
-import tokenize
 from pathlib import Path
 
-import tree_sitter_python as _tspy
-from tree_sitter import Language, Node, Parser
+import libcst as cst
+import libcst.metadata as md
 
 from .models import (
     CLASS,
@@ -35,12 +33,11 @@ from .models import (
     GuardBlock,
     ImportSpec,
     ModuleInfo,
-    Occ,
+    Ref,
 )
 
-_LOCAL = threading.local()
 _MAIN_RE = re.compile(
-    r"""^\s*(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)\s*$"""
+    r"""^(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)$"""
 )
 _TC_NAMES = {
     "TYPE_CHECKING",
@@ -48,17 +45,6 @@ _TC_NAMES = {
     "t.TYPE_CHECKING",
     "typing_extensions.TYPE_CHECKING",
 }
-_COMPOUND = {
-    "if_statement",
-    "try_statement",
-    "with_statement",
-    "for_statement",
-    "while_statement",
-    "match_statement",
-}
-_IMPORT_TYPES = {"import_statement", "import_from_statement", "future_import_statement"}
-_DEF_TYPES = {"function_definition", "class_definition", "decorated_definition"}
-_STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
 _ALL_METHODS = {
     "append",
     "extend",
@@ -81,28 +67,35 @@ _DYNAMIC_PATTERNS = {
     "__dir__": re.compile(r"__dir__"),
     "monkeypatch": re.compile(r"monkeypatch"),
 }
+_STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
+_COMPOUND = (
+    cst.If,
+    cst.Try,
+    cst.For,  # covers async for (asynchronous flag)
+    cst.While,
+    cst.With,  # covers async with (asynchronous flag)
+    cst.Match,
+)
 
 
-def _make_parser() -> Parser:
-    lang = Language(_tspy.language())
-    try:
-        return Parser(lang)  # tree_sitter >= 0.22
-    except TypeError:  # pragma: no cover - tree_sitter 0.21
-        parser = Parser()
-        parser.set_language(lang)
-        return parser
+def render_stmt(node: cst.CSTNode) -> str:
+    """Render a statement (or list of statements) as top-level code."""
+    return cst.Module(body=[node]).code
 
 
-def _get_parser() -> Parser:
-    parser = getattr(_LOCAL, "parser", None)
-    if parser is None:
-        parser = _make_parser()
-        _LOCAL.parser = parser
-    return parser
+def render_expr(node: cst.Expression) -> str:
+    """Render an expression node as a one-line string."""
+    return render_stmt(cst.SimpleStatementLine(body=[cst.Expr(value=node)])).strip()
 
 
-def _t(node: Node | None) -> str:
-    return node.text.decode("utf-8", "replace") if node is not None else ""
+def _dotted(node) -> str | None:
+    """Dotted name for Name/Attribute chains (import targets, attr roots)."""
+    if isinstance(node, cst.Name):
+        return node.value
+    if isinstance(node, cst.Attribute):
+        left = _dotted(node.value)
+        return f"{left}.{node.attr.value}" if left else None
+    return None
 
 
 def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
@@ -113,272 +106,540 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
 
 
 def parse_import(
-    node: Node, module: str, is_pkg: bool, type_checking: bool = False
+    stmt: cst.CSTNode, module: str, is_pkg: bool, type_checking: bool = False
 ) -> list[ImportSpec]:
-    specs: list[ImportSpec] = []
-    if node.type == "import_statement":
-        for ch in node.children_by_field_name("name"):
-            if ch.type == "aliased_import":
-                specs.append(
-                    ImportSpec(
-                        _t(ch.child_by_field_name("name")),
-                        alias=_t(ch.child_by_field_name("alias")),
-                        type_checking=type_checking,
-                    )
-                )
-            else:
-                specs.append(ImportSpec(_t(ch), type_checking=type_checking))
+    """Extract :class:`ImportSpec` entries from an import statement node."""
+    if isinstance(stmt, cst.Import):
+        specs = []
+        for alias in stmt.names:
+            name = _dotted(alias.name) or ""
+            alias_str = alias.asname.name.value if alias.asname else None
+            specs.append(ImportSpec(name, alias=alias_str, type_checking=type_checking))
         return specs
-    relative = False
-    mod_node = node.child_by_field_name("module_name")
-    if node.type == "future_import_statement":
-        mod = "__future__"
-    elif mod_node is not None and mod_node.type == "relative_import":
-        prefix = next((c for c in mod_node.children if c.type == "import_prefix"), None)
-        level = len(_t(prefix))
-        rest = next(
-            (_t(c) for c in mod_node.named_children if c.type == "dotted_name"), ""
-        )
-        mod = _resolve_relative(module, is_pkg, level, rest)
-        relative = True
-    else:
-        mod = _t(mod_node)
-    if any(c.type == "wildcard_import" for c in node.children):
-        return [
-            ImportSpec(
-                mod,
-                is_from=True,
-                star=True,
-                relative=relative,
-                type_checking=type_checking,
+    if isinstance(stmt, cst.ImportFrom):
+        level = len(stmt.relative)
+        rest = _dotted(stmt.module) if stmt.module is not None else ""
+        mod = _resolve_relative(module, is_pkg, level, rest) if level else rest
+        if isinstance(stmt.names, cst.ImportStar):
+            return [
+                ImportSpec(
+                    mod,
+                    is_from=True,
+                    star=True,
+                    relative=bool(level),
+                    type_checking=type_checking,
+                )
+            ]
+        specs = []
+        for alias in stmt.names:
+            name = _dotted(alias.name) or ""
+            alias_str = alias.asname.name.value if alias.asname else None
+            specs.append(
+                ImportSpec(
+                    mod,
+                    name=name,
+                    alias=alias_str,
+                    is_from=True,
+                    relative=bool(level),
+                    type_checking=type_checking,
+                )
             )
-        ]
-    for ch in node.children_by_field_name("name"):
-        if ch.type == "aliased_import":
-            name = _t(ch.child_by_field_name("name"))
-            alias = _t(ch.child_by_field_name("alias"))
-        else:
-            name, alias = _t(ch), None
-        specs.append(
-            ImportSpec(
-                mod,
-                name=name,
-                alias=alias,
-                is_from=True,
-                relative=relative,
-                type_checking=type_checking,
-            )
+        return specs
+    return []
+
+
+def _is_bare_string(value) -> bool:
+    """True for plain string expressions (docstrings / module constants)."""
+    if isinstance(value, cst.SimpleString):
+        return True
+    if isinstance(value, cst.FormattedString):
+        return not any(
+            isinstance(p, cst.FormattedStringExpression) for p in value.parts
         )
-    return specs
+    if isinstance(value, cst.ConcatenatedString):
+        return _is_bare_string(value.left) and _is_bare_string(value.right)
+    return False
 
 
-def _dotted(node: Node | None) -> str | None:
-    if node is None:
-        return None
-    if node.type == "identifier":
-        return _t(node)
-    if node.type == "attribute":
-        left = _dotted(node.child_by_field_name("object"))
-        return f"{left}.{_t(node.child_by_field_name('attribute'))}" if left else None
-    return None
-
-
-def _binding_names(node: Node | None) -> set[str]:
-    if node is None:
-        return set()
-    t = node.type
-    if t == "identifier":
-        return {_t(node)}
-    if t in ("default_parameter", "typed_default_parameter"):
-        return _binding_names(node.child_by_field_name("name"))
-    if t in (
-        "typed_parameter",
-        "list_splat_pattern",
-        "dictionary_splat_pattern",
-        "tuple_pattern",
-        "list_pattern",
-    ):
-        out: set[str] = set()
-        for ch in node.named_children:
-            if ch.type != "type":
-                out |= _binding_names(ch)
-        return out
-    return set()
-
-
-def _param_names(params: Node | None) -> set[str]:
+def _param_names(params: cst.Parameters) -> set[str]:
     names: set[str] = set()
-    if params is not None:
-        for ch in params.named_children:
-            names |= _binding_names(ch)
+    for group in (params.params, params.posonly_params, params.kwonly_params):
+        for p in group:
+            names.add(p.name.value)
+    for p in (params.star_arg, params.star_kwarg):
+        if isinstance(p, cst.Param):
+            names.add(p.name.value)
     return names
 
 
-def _push_param_exprs(stack: list, params: Node | None, lazy: bool, shadow: frozenset) -> None:
-    if params is None:
-        return
-    for ch in params.named_children:
-        if ch.type in (
-            "default_parameter",
-            "typed_default_parameter",
-            "typed_parameter",
-        ):
-            for field_name in ("type", "value"):
-                sub = ch.child_by_field_name(field_name)
-                if sub is not None:
-                    stack.append((sub, lazy, shadow, False))
-
-
-def _lhs_names(node: Node | None) -> list[str] | None:
-    if node is None:
-        return None
-    t = node.type
-    if t == "identifier":
-        return [_t(node)]
-    if t in ("pattern_list", "tuple_pattern", "list_pattern"):
+def _lhs_names(node) -> list[str] | None:
+    """Names bound by an assignment target; None when not a simple name list."""
+    if isinstance(node, cst.Name):
+        return [node.value]
+    if isinstance(node, (cst.Tuple, cst.List)):
         out: list[str] = []
-        for ch in node.named_children:
-            got = _lhs_names(ch)
+        for element in node.elements:
+            inner = element.value if isinstance(element, cst.Element) else element
+            got = _lhs_names(inner)
             if got is None:
                 return None
             out += got
         return out
-    if t == "list_splat_pattern":
-        return _lhs_names(node.named_children[0]) if node.named_children else None
+    if isinstance(node, cst.StarredElement):
+        return _lhs_names(node.value)
     return None
 
 
-def _target_names(assign: Node) -> list[str] | None:
-    names: list[str] = []
-    cur: Node | None = assign
-    while cur is not None and cur.type in ("assignment", "augmented_assignment"):
-        got = _lhs_names(cur.child_by_field_name("left"))
-        if got is None:
-            return None
-        names += got
-        cur = cur.child_by_field_name("right")
-    return names
+def _target_names(stmt) -> list[str] | None:
+    """Names bound by an Assign/AugAssign/AnnAssign, or None."""
+    if isinstance(stmt, cst.Assign):
+        names: list[str] = []
+        for target in stmt.targets:
+            got = _lhs_names(target.target)
+            if got is None:
+                return None
+            names += got
+        return names
+    if isinstance(stmt, (cst.AugAssign, cst.AnnAssign)):
+        return _lhs_names(stmt.target)
+    return None
 
 
-def _first_identifier(node: Node) -> str:
+def _name_ids(node) -> set[int]:
+    """ids of every Name node inside *node* (used to skip binding targets)."""
+    out: set[int] = set()
     stack = [node]
     while stack:
         cur = stack.pop()
-        if cur.type == "identifier":
-            return _t(cur)
-        stack.extend(reversed(cur.named_children))
-    return ""
+        if isinstance(cur, cst.Name):
+            out.add(id(cur))
+        for child in cur.children:
+            stack.append(child)
+    return out
 
 
-def _bound_names(node: Node) -> list[str]:
-    names: list[str] = []
-    stack = [node]
+def _match_binding_ids(pattern) -> set[int]:
+    """ids of Name nodes that BIND inside a match pattern (captures/rest)."""
+    out: set[int] = set()
+    stack = [pattern]
     while stack:
         cur = stack.pop()
-        for ch in cur.named_children:
-            t = ch.type
-            if t in ("function_definition", "class_definition"):
-                names.append(_t(ch.child_by_field_name("name")))
-            elif t == "decorated_definition":
-                names.append(
-                    _t(ch.child_by_field_name("definition").child_by_field_name("name"))
-                )
-            elif t == "expression_statement" and ch.named_children:
-                e = ch.named_children[0]
-                if e.type in ("assignment", "augmented_assignment"):
-                    names += _target_names(e) or []
-            elif t in _COMPOUND or t in (
-                "elif_clause",
-                "else_clause",
-                "except_clause",
-                "finally_clause",
-                "block",
-                "case_clause",
-            ):
-                stack.append(ch)
-    return list(dict.fromkeys(names))
+        if isinstance(cur, (cst.MatchAs, cst.MatchStar)):
+            if cur.name is not None:
+                out.add(id(cur.name))
+        elif isinstance(cur, cst.MatchMapping):
+            if cur.rest is not None:
+                out.add(id(cur.rest))
+        for child in cur.children:
+            stack.append(child)
+    return out
 
 
-def _scan(node: Node) -> tuple[list[Node], bool]:
-    imports: list[Node] = []
+def _scan_imports_defs(node) -> tuple[list, bool]:
+    """(import nodes, has function/class defs) anywhere inside *node*."""
+    imports: list = []
     has_def = False
     stack = [node]
     while stack:
         cur = stack.pop()
-        for ch in cur.named_children:
-            if ch.type in _IMPORT_TYPES:
-                imports.append(ch)
-            elif ch.type in _DEF_TYPES:
+        for child in cur.children:
+            if isinstance(child, (cst.Import, cst.ImportFrom)):
+                imports.append(child)
+            elif isinstance(child, (cst.FunctionDef, cst.ClassDef)):
                 has_def = True
             else:
-                stack.append(ch)
+                stack.append(child)
     return imports, has_def
 
 
-def _extent(node: Node) -> tuple[int, int]:
-    """Byte extent of *node* plus any comments attached above / beside it."""
-    start, end = node.start_byte, node.end_byte
-    row = node.start_point[0]
-    prev = node.prev_sibling
-    while prev is not None and prev.type == "comment" and prev.end_point[0] + 1 == row:
-        before = prev.prev_sibling
-        if before is not None and before.end_point[0] == prev.start_point[0]:
-            break
-        start, row = prev.start_byte, prev.start_point[0]
-        prev = prev.prev_sibling
-    nxt = node.next_sibling
-    if (
-        nxt is not None
-        and nxt.type == "comment"
-        and nxt.start_point[0] == node.end_point[0]
-    ):
-        end = nxt.end_byte
-    return start, end
-
-
-def _dedent_block(raw: bytes, cut: int) -> tuple[bytes, callable]:
-    if cut <= 0:
-        return raw, (lambda off: off)
-    lines = raw.split(b"\n")
-    stripped_lines = []
-    removed = []
-    for line in lines:
-        strip = 0
-        while strip < cut and line[strip : strip + 1] == b" ":
-            strip += 1
-        removed.append(strip)
-        stripped_lines.append(line[strip:])
-    starts_old = []
-    starts_new = []
-    old_pos = new_pos = 0
-    for line, strip_, kept in zip(lines, removed, stripped_lines):
-        starts_old.append(old_pos)
-        starts_new.append(new_pos)
-        old_pos += len(line) + 1
-        new_pos += len(kept) + 1
-
-    def remap(offset: int) -> int:
-        lo, hi = 0, len(starts_old) - 1
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if starts_old[mid] <= offset:
-                lo = mid
-            else:
-                hi = mid - 1
-        rel = offset - starts_old[lo]
-        return starts_new[lo] + max(0, rel - removed[lo])
-
-    return b"\n".join(stripped_lines), remap
-
-
-def _first_error_line(root: Node) -> int:
-    stack = [root]
+def _bound_names(node) -> list[str]:
+    """Names bound anywhere inside a compound statement (verbatim blocks)."""
+    names: list[str] = []
+    stack = [node]
     while stack:
         cur = stack.pop()
-        if cur.type == "ERROR" or cur.is_missing:
-            return cur.start_point[0] + 1
-        stack.extend(reversed([c for c in cur.children if c.has_error or c.is_missing]))
-    return 0
+        for child in cur.children:
+            if isinstance(child, (cst.FunctionDef, cst.ClassDef)):
+                names.append(child.name.value)
+            elif isinstance(child, (cst.Assign, cst.AugAssign, cst.AnnAssign)):
+                got = _target_names(child)
+                if got:
+                    names += got
+            else:
+                stack.append(child)
+    return list(dict.fromkeys(names))
+
+
+def _string_literals(node) -> list[str]:
+    """String literal values inside *node* (for ``__all__`` handling)."""
+    found: list[str] = []
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, cst.SimpleString):
+            try:
+                lit = ast.literal_eval(cur.value)
+                if isinstance(lit, str):
+                    found.append(lit)
+            except (ValueError, SyntaxError):
+                pass
+        for child in cur.children:
+            stack.append(child)
+    return found
+
+
+def _collect_all_stmt(small, info: ModuleInfo) -> bool:
+    """Handle ``__all__`` assignments / mutations; True when consumed."""
+    if isinstance(small, cst.Assign) and len(small.targets) == 1:
+        target = small.targets[0].target
+        if isinstance(target, cst.Name) and target.value == "__all__":
+            info.declared_all = (info.declared_all or []) + _string_literals(
+                small.value
+            )
+            return True
+        return False
+    if isinstance(small, cst.Expr) and isinstance(small.value, cst.Call):
+        func = small.value.func
+        if isinstance(func, cst.Attribute) and func.attr.value in _ALL_METHODS:
+            if _dotted(func.value) == "__all__":
+                found: list[str] = []
+                for arg in small.value.args:
+                    found += _string_literals(arg.value)
+                info.declared_all = (info.declared_all or []) + found
+                info.warnings.append(
+                    f"{info.module}: mutated __all__ ('{func.attr.value}') — static analysis "
+                    "may be incomplete; exported names are recomputed from definitions"
+                )
+                return True
+    return False
+
+
+class _DocstringStripper(cst.CSTTransformer):
+    """Remove module / class / function docstring statements."""
+
+    @staticmethod
+    def _is_doc_line(stmt) -> bool:
+        return (
+            isinstance(stmt, cst.SimpleStatementLine)
+            and len(stmt.body) == 1
+            and isinstance(stmt.body[0], cst.Expr)
+            and _is_bare_string(stmt.body[0].value)
+        )
+
+    def _strip_stmts(self, stmts):
+        if stmts and self._is_doc_line(stmts[0]):
+            return stmts[1:]
+        return stmts
+
+    def leave_Module(self, original_node, updated_node):
+        return updated_node.with_changes(body=self._strip_stmts(updated_node.body))
+
+    def _leave_suite_owner(self, updated_node):
+        body = updated_node.body
+        if isinstance(body, cst.IndentedBlock):
+            stmts = self._strip_stmts(body.body)
+            if stmts is not body.body:
+                if not stmts:
+                    stmts = [cst.SimpleStatementLine(body=[cst.Pass()])]
+                return updated_node.with_changes(body=body.with_changes(body=stmts))
+        elif isinstance(body, cst.SimpleStatementSuite):
+            smalls = body.body
+            if (
+                smalls
+                and isinstance(smalls[0], cst.Expr)
+                and _is_bare_string(smalls[0].value)
+            ):
+                smalls = smalls[1:] or [cst.Pass()]
+                return updated_node.with_changes(body=body.with_changes(body=smalls))
+        return updated_node
+
+    def leave_ClassDef(self, original_node, updated_node):
+        return self._leave_suite_owner(updated_node)
+
+    def leave_FunctionDef(self, original_node, updated_node):
+        return self._leave_suite_owner(updated_node)
+
+
+class _CommentStripper(cst.CSTTransformer):
+    """Remove comments while keeping code structure (shebang included in the
+    module header, which is dropped during extraction anyway)."""
+
+    def leave_EmptyLine(self, original_node, updated_node):
+        if updated_node.comment is not None:
+            return cst.RemovalSentinel.REMOVE
+        return updated_node
+
+    def leave_TrailingWhitespace(self, original_node, updated_node):
+        if updated_node.comment is not None:
+            return updated_node.with_changes(
+                comment=None, whitespace=cst.SimpleWhitespace("")
+            )
+        return updated_node
+
+
+class _Ctx:
+    """Traversal context: laziness (import-time vs runtime) and shadowing."""
+
+    __slots__ = ("lazy", "shadow", "cls")
+
+    def __init__(self, lazy: bool, shadow: frozenset, cls: bool):
+        self.lazy = lazy
+        self.shadow = shadow
+        self.cls = cls
+
+
+class RefWalker(cst.CSTTransformer):
+    """Walk a block collecting refs and/or applying renames.
+
+    ``collect=True`` records :class:`Ref` items (used for dependency
+    ordering); ``collect=False`` rewrites names/attributes/nested imports
+    using the resolver's environment. Both modes share the exact same scope
+    machinery, so what is *measured* is also what is *rewritten*.
+    """
+
+    def __init__(
+        self,
+        module: str,
+        is_pkg: bool,
+        collect: bool,
+        info: ModuleInfo | None = None,
+        resolver=None,
+        env: dict | None = None,
+        warned: set | None = None,
+    ):
+        self.module = module
+        self.is_pkg = is_pkg
+        self.collect = collect
+        self.info = info
+        self.resolver = resolver
+        self.env = env or {}
+        self.warned = warned if warned is not None else set()
+        self.refs: list[Ref] = []
+        self._skip: set[int] = set()
+        self._ctxs: list[_Ctx] = [_Ctx(False, frozenset(), False)]
+        self._frames: list[dict] = []
+        self._cls_pops: list[int] = []
+
+    # ------------------------------------------------------------------
+    # scope machinery
+    # ------------------------------------------------------------------
+    def visit_FunctionDef(self, node) -> bool:
+        self._skip.add(id(node.name))
+        self._frames.append(
+            {
+                "kind": "func",
+                "params": None,
+                "scope": False,
+                "base_shadow": self._ctxs[-1].shadow,
+            }
+        )
+        return True
+
+    def _maybe_rename_def_name(self, original_node, updated_node):
+        if self.collect:
+            return updated_node
+        name = original_node.name.value
+        target = self.env.get(name)
+        if target is None:
+            return updated_node
+        final = self.resolver._target_name(target, name)
+        if final is None or final == name:
+            return updated_node
+        return updated_node.with_changes(name=cst.Name(final))
+
+    def leave_FunctionDef(self, original_node, updated_node):
+        frame = self._frames.pop()
+        if frame["scope"]:
+            self._ctxs.pop()
+        return self._maybe_rename_def_name(original_node, updated_node)
+
+    def visit_Parameters(self, node) -> bool:
+        if self._frames and self._frames[-1]["kind"] == "func":
+            frame = self._frames[-1]
+            if frame["params"] is None:
+                frame["params"] = frozenset(_param_names(node))
+        # Param names are bindings, not references (defaults and annotations
+        # stay in the enclosing scope and keep being collected).
+        for group in (node.params, node.posonly_params, node.kwonly_params):
+            for p in group:
+                self._skip.add(id(p.name))
+        for p in (node.star_arg, node.star_kwarg):
+            if isinstance(p, cst.Param):
+                self._skip.add(id(p.name))
+        return True
+
+    def _push_func_scope(self) -> bool:
+        if self._frames and self._frames[-1]["kind"] == "func":
+            frame = self._frames[-1]
+            if not frame["scope"]:
+                shadow = frame["base_shadow"] | (frame["params"] or frozenset())
+                self._ctxs.append(_Ctx(True, frozenset(shadow), False))
+                frame["scope"] = True
+                return True
+        return False
+
+    def visit_IndentedBlock(self, node) -> bool:
+        self._push_func_scope()
+        return True
+
+    def visit_SimpleStatementSuite(self, node) -> bool:
+        self._push_func_scope()
+        return True
+
+    def visit_ClassDef(self, node) -> bool:
+        self._skip.add(id(node.name))
+        cur = self._ctxs[-1]
+        self._ctxs.append(_Ctx(cur.lazy, cur.shadow, True))
+        self._cls_pops.append(id(node))
+        return True
+
+    def leave_ClassDef(self, original_node, updated_node):
+        if self._cls_pops and self._cls_pops[-1] == id(original_node):
+            self._cls_pops.pop()
+            self._ctxs.pop()
+        return self._maybe_rename_def_name(original_node, updated_node)
+
+    def visit_Lambda(self, node) -> bool:
+        cur = self._ctxs[-1]
+        shadow = cur.shadow | frozenset(_param_names(node.params))
+        self._ctxs.append(_Ctx(True, frozenset(shadow), False))
+        self._frames.append({"kind": "lambda", "scope": True})
+        return True
+
+    def leave_Lambda(self, original_node, updated_node):
+        self._frames.pop()
+        self._ctxs.pop()
+        return updated_node
+
+    # ------------------------------------------------------------------
+    # binding positions that must NOT be rewritten
+    # ------------------------------------------------------------------
+    def visit_ExceptHandler(self, node) -> bool:
+        if node.name is not None:
+            self._skip.add(id(node.name))
+        return True
+
+    def visit_For(self, node) -> bool:
+        self._skip |= _name_ids(node.target)
+        return True
+
+    def visit_With(self, node) -> bool:
+        for item in node.items:
+            if item.asname is not None:
+                self._skip.add(id(item.asname.name))
+        return True
+
+    def visit_NamedExpr(self, node) -> bool:
+        self._skip.add(id(node.target))
+        return True
+
+    def visit_MatchCase(self, node) -> bool:
+        self._skip |= _match_binding_ids(node.pattern)
+        return True
+
+    def visit_Assign(self, node) -> bool:
+        if self._ctxs[-1].cls:
+            for target in node.targets:
+                self._skip |= _name_ids(target.target)
+        return True
+
+    def visit_AnnAssign(self, node) -> bool:
+        if self._ctxs[-1].cls:
+            self._skip |= _name_ids(node.target)
+        return True
+
+    visit_AugAssign = visit_AnnAssign
+
+    def visit_Attribute(self, node) -> bool:
+        self._skip.add(id(node.attr))
+        return True
+
+    def visit_Arg(self, node) -> bool:
+        if node.keyword is not None:
+            self._skip.add(id(node.keyword))
+        return True
+
+    def visit_Import(self, node) -> bool:
+        # libcst does not call leave_* when visit_* returns False, so we
+        # descend but skip every Name inside (aliases are not references).
+        self._skip |= _name_ids(node)
+        return True
+
+    def visit_ImportFrom(self, node) -> bool:
+        self._skip |= _name_ids(node)
+        return True
+
+    # ------------------------------------------------------------------
+    # reference collection / rewriting
+    # ------------------------------------------------------------------
+    def leave_Name(self, original_node, updated_node):
+        if id(original_node) in self._skip:
+            return updated_node
+        name = original_node.value
+        ctx = self._ctxs[-1]
+        if name in ctx.shadow:
+            return updated_node
+        if name == "__file__" and self.collect and "file" not in self.warned:
+            self.warned.add("file")
+            self.info.warnings.append(
+                f"{self.module}: uses __file__, which now points at the consolidated file"
+            )
+        if self.collect:
+            self.refs.append(Ref(name, "name", eager=not ctx.lazy))
+            return updated_node
+        target = self.env.get(name)
+        if target is None:
+            return updated_node
+        final = self.resolver._target_name(target, name)
+        if final is None or final == name:
+            return updated_node
+        return updated_node.with_changes(value=final)
+
+    def leave_Attribute(self, original_node, updated_node):
+        chain = _dotted(original_node.value)
+        if chain is None:
+            return updated_node
+        ctx = self._ctxs[-1]
+        if chain.split(".")[0] in ctx.shadow:
+            return updated_node
+        attr = original_node.attr.value
+        if self.collect:
+            self.refs.append(Ref(attr, "attr", eager=not ctx.lazy, obj=chain))
+            return updated_node
+        target = self.resolver._resolve_dotted(self.module, chain, attr)
+        if target is None:
+            return updated_node
+        final = self.resolver._target_name(target, None)
+        if final is None:
+            return updated_node
+        return updated_node.with_changes(attr=cst.Name(final))
+
+    def _nested_ref(self, original_node) -> None:
+        specs = tuple(parse_import(original_node, self.module, self.is_pkg))
+        self.refs.append(Ref("", "nested_import", specs=specs))
+
+    def leave_Import(self, original_node, updated_node):
+        if self.collect:
+            self._nested_ref(original_node)
+            return updated_node
+        specs = parse_import(original_node, self.module, self.is_pkg)
+        if not any(self.resolver._is_internal(s) for s in specs):
+            return updated_node
+        kept = [
+            alias
+            for alias, spec in zip(updated_node.names, specs)
+            if not self.resolver._is_internal(spec)
+        ]
+        return cst.Import(names=kept) if kept else cst.Pass()
+
+    def leave_ImportFrom(self, original_node, updated_node):
+        if self.collect:
+            self._nested_ref(original_node)
+            return updated_node
+        specs = parse_import(original_node, self.module, self.is_pkg)
+        if not any(self.resolver._is_internal(s) for s in specs):
+            return updated_node
+        return cst.Pass()
 
 
 def _detect_dynamic_patterns(text: str, info: ModuleInfo) -> None:
@@ -398,19 +659,237 @@ def _detect_dynamic_patterns(text: str, info: ModuleInfo) -> None:
                 )
 
 
-def _detect_runtime_semantics(text: str, info: ModuleInfo) -> None:
-    """Warn about dunder usage that changes meaning in a consolidated file.
+def _collect_block_refs(info, node, warned) -> list[Ref]:
+    walker = RefWalker(info.module, info.is_pkg, collect=True, info=info, warned=warned)
+    node.visit(walker)
+    return walker.refs
 
-    *text* should exclude ``__main__`` guards — every module that has one
-    legitimately references ``__name__`` there.
-    """
-    for sym in ("__file__", "__name__", "__package__", "__path__"):
-        if sym in text:
-            if sym != "__file__":
-                info.warnings.append(
-                    f"{info.module}: uses {sym} — semantics change in consolidated file "
-                    "(it now points at the consolidated module)"
+
+def _make_block(info, by_name, warned, kind, names, node, start, end) -> None:
+    block = Block(info.module, kind, list(names), [node])
+    block.order = len(info.blocks)
+    block.orig_path = info.path
+    block.start_line = start
+    block.end_line = end
+    block.refs = _collect_block_refs(info, node, warned)
+    target = next((by_name[n] for n in names if n in by_name), None)
+    if target is not None:
+        target.merge(block)
+        for n in names:
+            by_name.setdefault(n, target)
+        return
+    info.blocks.append(block)
+    for n in names:
+        by_name[n] = block
+
+
+def _add_compound(info, by_name, warned, stmt, start, end) -> None:
+    """Compound statement: import guard when possible, verbatim MISC else."""
+    code = render_stmt(stmt)
+    imports, has_def = _scan_imports_defs(stmt)
+    if imports and not has_def:
+        specs = [
+            spec
+            for imp in imports
+            for spec in parse_import(imp, info.module, info.is_pkg)
+        ]
+        info.guards.append(GuardBlock(code, specs, _bound_names(stmt), True))
+        return
+    info.warnings.append(
+        f"{info.module}: module-level {type(stmt).__name__} "
+        "combines imports and definitions — emitted verbatim, "
+        "names bound there are not rewritten"
+    )
+    _make_block(info, by_name, warned, MISC, _bound_names(stmt), stmt, start, end)
+
+
+def _add_simple(info, by_name, warned, small, start, end, lead, trailing) -> None:
+    """One small statement of a module-level simple statement line."""
+    if isinstance(small, (cst.Import, cst.ImportFrom)):
+        info.imports.extend(parse_import(small, info.module, info.is_pkg))
+        return
+    if isinstance(small, cst.Expr) and _collect_all_stmt(small, info):
+        return
+    if isinstance(small, (cst.Assign, cst.AugAssign, cst.AnnAssign)):
+        if _collect_all_stmt(small, info):
+            return
+        names = _target_names(small)
+        if names:
+            node = cst.SimpleStatementLine(
+                body=[small],
+                leading_lines=lead,
+                trailing_whitespace=trailing,
+            )
+            _make_block(info, by_name, warned, CONST, names, node, start, end)
+            return
+    if isinstance(small, cst.Expr) and _is_bare_string(small.value):
+        return
+    if isinstance(small, cst.Pass):
+        return
+    node = cst.SimpleStatementLine(
+        body=[small],
+        leading_lines=lead,
+        trailing_whitespace=trailing,
+    )
+    _make_block(info, by_name, warned, MISC, [], node, start, end)
+
+
+def _add_type_checking(info, by_name, warned, node, positions) -> None:
+    """Extract imports and definitions from ``if TYPE_CHECKING:`` bodies."""
+    if isinstance(node.body, cst.IndentedBlock):
+        body_start = positions[node.body].start.line
+        body_stmts = list(node.body.body)
+    else:  # one-liner ``if TYPE_CHECKING: import x``
+        body_start = positions[node].start.line
+        body_stmts = [cst.SimpleStatementLine(body=[s]) for s in node.body.body]
+    for s in body_stmts:
+        code = render_stmt(s)
+        nlines = code.count("\n")
+        start = body_start
+        body_start += nlines
+        end = body_start - 1
+        smalls = s.body if isinstance(s, cst.SimpleStatementLine) else None
+        if smalls is not None:
+            for small in smalls:
+                if isinstance(small, (cst.Import, cst.ImportFrom)):
+                    info.imports.extend(
+                        parse_import(
+                            small, info.module, info.is_pkg, type_checking=True
+                        )
+                    )
+                elif isinstance(small, cst.Pass):
+                    continue
+                elif _collect_all_stmt(small, info):
+                    continue
+                elif isinstance(small, cst.Expr) and _is_bare_string(small.value):
+                    continue
+                else:
+                    names = _target_names(small) or []
+                    kind = CONST if names else MISC
+                    wrapped = cst.SimpleStatementLine(
+                        body=[small],
+                        leading_lines=s.leading_lines,
+                        trailing_whitespace=s.trailing_whitespace,
+                    )
+                    _make_block(info, by_name, warned, kind, names, wrapped, start, end)
+            continue
+        if isinstance(s, (cst.FunctionDef, cst.ClassDef)):
+            kind = CLASS if isinstance(s, cst.ClassDef) else FUNC
+            _make_block(info, by_name, warned, kind, [s.name.value], s, start, end)
+            continue
+        imports, has_def = _scan_imports_defs(s)
+        if imports and not has_def:
+            specs = [
+                spec
+                for imp in imports
+                for spec in parse_import(
+                    imp, info.module, info.is_pkg, type_checking=True
                 )
+            ]
+            info.guards.append(GuardBlock(code, specs, _bound_names(s), True))
+            continue
+        _make_block(info, by_name, warned, MISC, _bound_names(s), s, start, end)
+
+
+def _extract(info: ModuleInfo, tree: cst.Module, positions: dict) -> None:
+    body = list(tree.body)
+    # positions were resolved on the original tree; remember lines by id so
+    # the header hoist below (which replaces body[0]) never KeyErrors.
+    starts = {id(s): positions[s].start.line for s in body}
+    if tree.header and body:
+        # Comments at the top of the file travel with the first statement,
+        # mirroring the old comment-pulling behaviour.
+        first = body[0]
+        body[0] = first.with_changes(leading_lines=(*tree.header, *first.leading_lines))
+        starts[id(body[0])] = starts[id(first)]
+    by_name: dict[str, Block] = {}
+    warned: set = set()
+
+    for stmt in body:
+        start = starts[id(stmt)]
+        nlines = render_stmt(stmt).count("\n")
+        end = start + nlines - 1
+        if isinstance(stmt, cst.SimpleStatementLine):
+            smalls = stmt.body
+            if len(smalls) == 1:
+                _add_simple(
+                    info,
+                    by_name,
+                    warned,
+                    smalls[0],
+                    start,
+                    end,
+                    stmt.leading_lines,
+                    stmt.trailing_whitespace,
+                )
+            else:
+                for i, small in enumerate(smalls):
+                    _add_simple(
+                        info,
+                        by_name,
+                        warned,
+                        small,
+                        start,
+                        end,
+                        stmt.leading_lines if i == 0 else (),
+                        stmt.trailing_whitespace if i == len(smalls) - 1 else None,
+                    )
+        elif isinstance(stmt, (cst.FunctionDef, cst.ClassDef)):
+            kind = CLASS if isinstance(stmt, cst.ClassDef) else FUNC
+            _make_block(
+                info, by_name, warned, kind, [stmt.name.value], stmt, start, end
+            )
+        elif isinstance(stmt, cst.If):
+            cond = render_expr(stmt.test)
+            if _MAIN_RE.match(cond):
+                _make_block(info, by_name, warned, MAIN, [], stmt, start, end)
+                continue
+            if cond in _TC_NAMES:
+                _add_type_checking(info, by_name, warned, stmt, positions)
+                continue
+            if (
+                "sys.platform" in cond
+                or "sys.version" in cond
+                or "TYPE_CHECKING" in cond
+            ):
+                info.warnings.append(
+                    f"{info.module}: conditional import guarded by '{cond}' kept verbatim"
+                )
+            _add_compound(info, by_name, warned, stmt, start, end)
+        elif isinstance(stmt, _COMPOUND):
+            _add_compound(info, by_name, warned, stmt, start, end)
+        elif isinstance(stmt, cst.SimpleStatementSuite):
+            for small in stmt.body:
+                _add_simple(info, by_name, warned, small, start, end, (), None)
+        else:
+            _make_block(info, by_name, warned, MISC, [], stmt, start, end)
+    _detect_dynamic_patterns(tree.code, info)
+    _detect_runtime_semantics(info, tree.code)
+
+
+def _detect_runtime_semantics(info: ModuleInfo, text: str) -> None:
+    """Warn about dunder / resource-loading usage outside ``__main__`` guards.
+
+    Dunder warnings are ref-based: every module with a plain
+    ``if __name__ == "__main__":`` guard legitimately references ``__name__``
+    inside the guard block, so MAIN blocks are excluded from the scan.
+    """
+    seen: set[str] = set()
+    for block in info.blocks:
+        if block.kind == MAIN:
+            continue
+        for ref in block.refs:
+            if ref.kind == "name" and ref.name in (
+                "__name__",
+                "__package__",
+                "__path__",
+            ):
+                if ref.name not in seen:
+                    seen.add(ref.name)
+                    info.warnings.append(
+                        f"{info.module}: uses {ref.name} — semantics change in consolidated file "
+                        "(it now points at the consolidated module)"
+                    )
     if (
         "importlib.resources" in text
         or "pkg_resources" in text
@@ -420,441 +899,6 @@ def _detect_runtime_semantics(text: str, info: ModuleInfo) -> None:
             f"{info.module}: does resource loading relative to __file__ — verify output "
             "handles bundled resources (see --embed-data)"
         )
-
-
-def _strip_comments_from_source(src: bytes) -> bytes:
-    """Remove comment lines / trailing comments using ``tokenize``.
-
-    Token-based removal never touches ``#`` characters that live inside
-    string literals; if tokenization fails we fall back to returning the
-    source untouched rather than risk corrupting it.
-    """
-    text = src.decode("utf-8", "replace")
-    try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
-        return src
-    comment_cols: dict[int, tuple[int, int]] = {}
-    for tok in tokens:
-        if tok.type == tokenize.COMMENT:
-            comment_cols[tok.start[0]] = (tok.start[1], tok.end[1])
-    if not comment_cols:
-        return src
-    out: list[str] = []
-    for i, line in enumerate(text.splitlines(), start=1):
-        stripped = line.lstrip()
-        if i == 1 and stripped.startswith("#!"):
-            out.append(line)
-            continue
-        if i <= 2 and "coding" in stripped and stripped.startswith("#"):
-            out.append(line)
-            continue
-        if i in comment_cols:
-            c1, c2 = comment_cols[i]
-            line = line[:c1] + line[c2:]
-            if not line.strip():
-                continue
-        out.append(line)
-    result = "\n".join(out) + "\n"
-    return result.encode("utf-8")
-
-
-def _docstring_ranges(root: Node, src: bytes) -> list[tuple[int, int]]:
-    """Byte ranges of module/class/function docstrings in *src*."""
-    ranges: list[tuple[int, int]] = []
-
-    def visit_body(parent: Node) -> None:
-        children = [
-            c for c in parent.named_children if c.type not in ("comment",)
-        ]
-        if not children:
-            return
-        first = children[0]
-        if first.type != "expression_statement" or not first.named_children:
-            return
-        expr = first.named_children[0]
-        if expr.type in ("string", "concatenated_string"):
-            # Check there is no interpolation / no f-string prefix.
-            pure = all(
-                c.type in ("string_start", "string_content", "string_end")
-                for c in expr.named_children
-            ) if expr.named_children else True
-            if pure:
-                ranges.append((first.start_byte, first.end_byte))
-
-    visit_body(root)
-    stack = [root]
-    while stack:
-        cur = stack.pop()
-        for ch in cur.named_children:
-            if ch.type == "block":
-                visit_body(ch)
-            stack.append(ch)
-    return ranges
-
-
-def _strip_docstrings_modulewide(root: Node, src: bytes) -> bytes:
-    """Delete every docstring from *src*; byte offsets stay consistent.
-
-    The deletions are applied to the whole module source and the module is
-    re-parsed afterwards, so occurrence offsets collected later always match
-    the final block sources.
-    """
-    ranges = _docstring_ranges(root, src)
-    if not ranges:
-        return src
-    # Cut from the end so earlier offsets remain valid.
-    ranges.sort(reverse=True)
-    for start, end in ranges:
-        # Extend to swallow the indentation before and the newline after.
-        line_start = src.rfind(b"\n", 0, start) + 1
-        if not src[line_start:start].strip():
-            start = line_start
-        if src[end : end + 1] == b"\n":
-            end += 1
-        src = src[:start] + src[end:]
-    return src
-
-
-def _collect_occs(
-    root: Node, base: int, src: bytes, own_def: Node | None, info: ModuleInfo
-) -> list[Occ]:
-    occs: list[Occ] = []
-    own_id = own_def.id if own_def is not None else None
-    future = info.future_annotations
-    warned_file = False
-    stack: list[tuple[Node, bool, frozenset, bool]] = [
-        (root, False, frozenset(), False)
-    ]
-    while stack:
-        node, lazy, shadow, cls = stack.pop()
-        t = node.type
-        if t == "identifier":
-            name = _t(node)
-            if name in shadow:
-                continue
-            if name == "__file__" and not warned_file:
-                info.warnings.append(
-                    f"{info.module}: uses __file__, which now points at the consolidated file"
-                )
-                warned_file = True
-            occs.append(
-                Occ(node.start_byte - base, node.end_byte - base, name, "name", not lazy)
-            )
-            continue
-        if t == "attribute":
-            obj = node.child_by_field_name("object")
-            chain = _dotted(obj)
-            if chain is not None and chain.split(".")[0] not in shadow:
-                occs.append(
-                    Occ(
-                        node.start_byte - base,
-                        node.end_byte - base,
-                        _t(node.child_by_field_name("attribute")),
-                        "attr",
-                        not lazy,
-                        chain,
-                    )
-                )
-            if obj is not None:
-                stack.append((obj, lazy, shadow, False))
-            continue
-        if t == "keyword_argument":
-            value = node.child_by_field_name("value")
-            if value is not None:
-                stack.append((value, lazy, shadow, False))
-            continue
-        if t in _IMPORT_TYPES:
-            specs = tuple(parse_import(node, info.module, info.is_pkg))
-            ls = src.rfind(b"\n", 0, node.start_byte) + 1
-            indent = src[ls : node.start_byte].decode("utf-8", "replace")
-            if indent.strip():
-                indent = ""
-            occs.append(
-                Occ(
-                    node.start_byte - base,
-                    node.end_byte - base,
-                    "",
-                    "nested_import",
-                    not lazy,
-                    indent,
-                    specs,
-                )
-            )
-            continue
-        if t == "function_definition":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None and node.id == own_id:
-                stack.append((name_node, lazy, shadow, False))
-            params = node.child_by_field_name("parameters")
-            inner = shadow | _param_names(params)
-            _push_param_exprs(stack, params, lazy, shadow)
-            for fld in ("return_type", "type_parameters"):
-                sub = node.child_by_field_name(fld)
-                if sub is not None:
-                    stack.append((sub, lazy, shadow, False))
-            body = node.child_by_field_name("body")
-            if body is not None:
-                stack.append((body, True, inner, False))
-            continue
-        if t == "lambda":
-            params = node.child_by_field_name("parameters")
-            inner = shadow | _param_names(params)
-            _push_param_exprs(stack, params, lazy, shadow)
-            body = node.child_by_field_name("body")
-            if body is not None:
-                stack.append((body, True, inner, False))
-            continue
-        if t == "class_definition":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None and node.id == own_id:
-                stack.append((name_node, lazy, shadow, False))
-            for fld in ("superclasses", "type_parameters"):
-                sub = node.child_by_field_name(fld)
-                if sub is not None:
-                    stack.append((sub, lazy, shadow, False))
-            body = node.child_by_field_name("body")
-            if body is not None:
-                stack.append((body, lazy, shadow, True))
-            continue
-        if cls and t == "block":
-            for ch in node.named_children:
-                if ch.type == "expression_statement" and ch.named_children:
-                    inner_stmt = ch.named_children[0]
-                    if inner_stmt.type in ("assignment", "augmented_assignment"):
-                        # Only the annotated type and the RHS are references;
-                        # the attribute name itself must NOT be rewritten or
-                        # instance attribute access (``self.x``) would break.
-                        for fld in ("type", "right"):
-                            sub = inner_stmt.child_by_field_name(fld)
-                            if sub is not None:
-                                stack.append((sub, lazy, shadow, False))
-                        continue
-                stack.append((ch, lazy, shadow, False))
-            continue
-        child_lazy = True if (t == "type" and future) else lazy
-        for ch in node.named_children:
-            stack.append((ch, child_lazy, shadow, False))
-    return occs
-
-
-def _collect_all_stmt(node: Node, info: ModuleInfo) -> bool:
-    if node.type != "expression_statement" or not node.named_children:
-        return False
-    e = node.named_children[0]
-    if e.type in ("assignment", "augmented_assignment"):
-        names = _target_names(e)
-        if names == ["__all__"]:
-            info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                _t(e.child_by_field_name("right"))
-            )
-            return True
-        return False
-    if e.type == "call":
-        fn = e.child_by_field_name("function")
-        if fn is not None and fn.type == "attribute":
-            if _dotted(fn.child_by_field_name("object")) == "__all__":
-                method = _t(fn.child_by_field_name("attribute"))
-                if method in _ALL_METHODS:
-                    args = e.child_by_field_name("arguments")
-                    for arg in args.named_children if args is not None else ():
-                        if arg.type == "argument_list":
-                            continue
-                        info.declared_all = (info.declared_all or []) + _STR_RE.findall(
-                            _t(arg)
-                        )
-                    info.warnings.append(
-                        f"{info.module}: mutated __all__ ('{method}') — static analysis "
-                        "may be incomplete; exported names are recomputed from definitions"
-                    )
-                    return True
-    return False
-
-
-def _is_bare_string(node: Node | None) -> bool:
-    if node is None or node.type not in ("string", "concatenated_string"):
-        return False
-    stack = [node]
-    while stack:
-        cur = stack.pop()
-        if cur.type == "interpolation":
-            return False
-        stack.extend(cur.children)
-    return True
-
-
-def _extract(info: ModuleInfo, root: Node, src: bytes) -> None:
-    info.future_annotations = any(
-        n.type == "future_import_statement" and b"annotations" in n.text
-        for n in root.named_children
-    )
-    by_name: dict[str, Block] = {}
-    main_ranges: list[tuple[int, int]] = []
-
-    def add(
-        kind: str,
-        names: list[str],
-        node: Node,
-        own: Node | None = None,
-        dedent: bool = False,
-    ) -> None:
-        start, end = _extent(node)
-        start_line = node.start_point[0] + 1
-        end_line = node.end_point[0] + 1
-        raw_source = src[start:end]
-        occs = _collect_occs(node, start, src, own, info)
-        if dedent:
-            cut = node.start_point[1]
-            raw_source, remap = _dedent_block(raw_source, cut)
-            for occ in occs:
-                occ.start = remap(occ.start)
-                occ.end = remap(occ.end)
-        block = Block(info.module, kind, list(names), raw_source, occs, len(info.blocks))
-        block.orig_path = info.path
-        block.start_line = start_line
-        block.end_line = end_line
-        target = next((by_name[n] for n in names if n in by_name), None)
-        if target is not None:
-            target.merge(block)
-            for n in names:
-                by_name.setdefault(n, target)
-            return
-        info.blocks.append(block)
-        for n in names:
-            by_name[n] = block
-
-    def add_type_checking(node: Node) -> None:
-        body = node.child_by_field_name("consequence")
-        if body is None:
-            return
-        for ch in body.named_children:
-            if ch.type == "comment":
-                continue
-            if ch.type in _IMPORT_TYPES:
-                info.imports.extend(
-                    parse_import(ch, info.module, info.is_pkg, type_checking=True)
-                )
-            elif ch.type in _DEF_TYPES:
-                d = (
-                    ch.child_by_field_name("definition")
-                    if ch.type == "decorated_definition"
-                    else ch
-                )
-                kind = CLASS if d.type == "class_definition" else FUNC
-                add(kind, [_t(d.child_by_field_name("name"))], ch, own=d, dedent=True)
-            elif ch.type == "expression_statement":
-                if _collect_all_stmt(ch, info):
-                    continue
-                e = ch.named_children[0] if ch.named_children else None
-                if _is_bare_string(e):
-                    continue
-                if e is not None and e.type in ("assignment", "augmented_assignment"):
-                    names = _target_names(e)
-                    if names:
-                        add(CONST, names, ch, dedent=True)
-                        continue
-                add(MISC, [], ch, dedent=True)
-            elif ch.type == "pass_statement":
-                continue
-            else:
-                add(MISC, _bound_names(ch), ch, dedent=True)
-
-    for n in root.named_children:
-        t = n.type
-        if t == "comment":
-            continue
-        if t in _IMPORT_TYPES:
-            info.imports.extend(parse_import(n, info.module, info.is_pkg))
-        elif t in _DEF_TYPES:
-            d = (
-                n.child_by_field_name("definition")
-                if t == "decorated_definition"
-                else n
-            )
-            kind = CLASS if d.type == "class_definition" else FUNC
-            add(kind, [_t(d.child_by_field_name("name"))], n, own=d)
-        elif t == "expression_statement":
-            e = n.named_children[0] if n.named_children else None
-            if e is None or _is_bare_string(e):
-                continue
-            if _collect_all_stmt(n, info):
-                continue
-            if e.type in ("assignment", "augmented_assignment"):
-                names = _target_names(e)
-                if names:
-                    add(CONST, names, n)
-                    continue
-            add(MISC, [], n)
-        elif t == "type_alias_statement":
-            add(CONST, [_first_identifier(n)], n)
-        elif t in _COMPOUND:
-            if t == "if_statement":
-                cond = _t(n.child_by_field_name("condition")).strip()
-                if _MAIN_RE.match(cond):
-                    add(MAIN, [], n)
-                    main_ranges.append((n.start_byte, n.end_byte))
-                    continue
-                if cond in _TC_NAMES:
-                    add_type_checking(n)
-                    continue
-                if (
-                    "sys.platform" in cond
-                    or "sys.version" in cond
-                    or "TYPE_CHECKING" in cond
-                ):
-                    info.warnings.append(
-                        f"{info.module}: conditional import guarded by '{cond.strip()}' kept verbatim"
-                    )
-            imports, has_def = _scan(n)
-            is_try_guard = (
-                imports
-                and not has_def
-                and t
-                in (
-                    "if_statement",
-                    "try_statement",
-                )
-            )
-            if is_try_guard:
-                start, end = _extent(n)
-                specs = [
-                    s
-                    for imp in imports
-                    for s in parse_import(imp, info.module, info.is_pkg)
-                ]
-                info.guards.append(
-                    GuardBlock(
-                        src[start:end].decode("utf-8", "replace"),
-                        specs,
-                        _bound_names(n),
-                        conditional=True,
-                    )
-                )
-            else:
-                info.warnings.append(
-                    f"{info.module}: module-level {t.replace('_statement', '')} "
-                    f"block combines imports and definitions — emitted verbatim, "
-                    "names bound there are not rewritten"
-                )
-                add(MISC, _bound_names(n), n)
-        elif t == "pass_statement":
-            continue
-        else:
-            add(MISC, [], n)
-    full_text = src.decode("utf-8", "replace")
-    _detect_dynamic_patterns(full_text, info)
-    # Remove main-guard regions before scanning for __name__ etc. so a
-    # plain `if __name__ == "__main__":` guard does not trigger a warning.
-    scanned = full_text
-    if main_ranges:
-        pieces = []
-        pos = 0
-        for s, e in sorted(main_ranges):
-            pieces.append(scanned[pos:s])
-            pos = e
-        pieces.append(scanned[pos:])
-        scanned = "".join(pieces)
-    _detect_runtime_semantics(scanned, info)
 
 
 def parse_module_file(
@@ -883,26 +927,24 @@ def parse_module_file(
         info.warnings.append(
             f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters"
         )
+    text = src.decode("utf-8", "replace")
+    try:
+        tree = cst.parse_module(text)
+    except cst.ParserSyntaxError as exc:
+        detail = getattr(exc, "message", None) or str(exc)
+        info.errors.append(f"{path_str}: syntax error: {detail}")
+        return info
+    except Exception as exc:  # unexpected parser failure
+        info.errors.append(f"{path_str}: parse failed: {exc!r}")
+        return info
     try:
         if not keep_comments:
-            src = _strip_comments_from_source(src)
-        root = _get_parser().parse(src).root_node
-        if root.has_error:
-            err_line = _first_error_line(root)
-            info.errors.append(f"{path_str}: syntax error near line {err_line}")
-            return info
+            tree = tree.visit(_CommentStripper())
         if not keep_docstrings:
-            src = _strip_docstrings_modulewide(root, src)
-            root = _get_parser().parse(src).root_node
-            if root.has_error:
-                err_line = _first_error_line(root)
-                info.errors.append(
-                    f"{path_str}: syntax error near line {err_line} (after docstring removal)"
-                )
-                return info
-            for b in info.blocks:
-                b.stripped_docstring = True
-        _extract(info, root, src)
+            tree = tree.visit(_DocstringStripper())
+        wrapper = md.MetadataWrapper(tree, unsafe_skip_copy=True)
+        positions = wrapper.resolve(md.PositionProvider)
+        _extract(info, tree, positions)
     except Exception as exc:
         info.errors.append(f"{path_str}: extraction failed: {exc!r}")
     return info

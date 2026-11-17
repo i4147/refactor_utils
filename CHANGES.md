@@ -1,3 +1,49 @@
+# Changes in 3.0.0 — rewritten on libcst
+
+The whole parsing/rewriting layer now runs on
+[libcst](https://github.com/Instagram/LibCST) instead of tree-sitter. The CLI
+surface, library API, consolidation semantics and the data-embedding feature
+are unchanged; only the dependency (`libcst`, no more `tree-sitter`) and the
+internal pipeline changed.
+
+## What the rewrite buys
+
+1. **No more byte-offset bookkeeping.** Blocks keep their libcst statement
+   nodes; renames, nested-import replacement and docstring/comment stripping
+   are node-level CST transformations. The 2.x class of bugs where stripped
+   docstrings invalidated occurrence offsets cannot happen by construction.
+2. **Lossless comments and whitespace.** Comments attached to a statement
+   (libcst `leading_lines`) travel with their block when it is reordered, so
+   consolidated output keeps the original comment placement.
+3. **Correct binding scopes.** `for`/`async for` targets, `with` bindings,
+   `except ... as e` names, walrus targets, comprehension targets and match
+   captures are treated as bindings — they are no longer rewritten as if they
+   were module-level references (2.x rewrote them, which could break local
+   bindings that happened to shadow a module name). Function bodies stay
+   lazy (runtime references) while parameter defaults, decorators, class
+   bodies and return/parameter annotations stay eager (import-time
+   references) for ordering purposes.
+4. **Exact one-pass consistency.** The same walker (scope machinery included)
+   performs reference collection and renaming, so what is *measured* is
+   exactly what is *rewritten*.
+5. `if __name__ == "__main__":` detection, `TYPE_CHECKING` extraction,
+   `try/except` import guards and `__all__` mutation tracking all operate on
+   typed CST nodes instead of regexes over tree-sitter text.
+
+## Internal notes
+
+* `models.Block` stores `nodes` (libcst statements) + `refs`; the `source`
+  property renders via `cst.Module` for hashing and tests.
+* `parser.RefWalker` is a single `cst.CSTTransformer` with a `collect` flag:
+  `collect=True` records `Ref`s (kind `name` / `attr` / `nested_import`,
+  eager/lazy), `collect=False` rewrites against the resolver environment.
+* Docstring and comment stripping happen before extraction; libcst 1.x
+  `FormattedString` nodes keep non-interpolated f-strings classified as bare
+  strings (parity with 2.x).
+* Annotations are treated as eager references even under
+  `from __future__ import annotations` (2.x marked them lazy). This only
+  ever makes the emit order more conservative, never incorrect.
+
 # Changes in 2.1.0
 
 ## Critical fixes

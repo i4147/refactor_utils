@@ -19,6 +19,7 @@ The consolidated module exposes:
   loaders);
 * ``list_resources()`` — sorted list of embedded resource names.
 """
+
 from __future__ import annotations
 
 import base64

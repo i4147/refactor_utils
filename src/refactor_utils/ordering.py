@@ -1,4 +1,5 @@
 """Deterministic dependency ordering of blocks (topological sort)."""
+
 from __future__ import annotations
 
 import heapq

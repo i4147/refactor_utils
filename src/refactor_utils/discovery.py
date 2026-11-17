@@ -1,4 +1,5 @@
 """File discovery: python sources, data files and pyproject config."""
+
 from __future__ import annotations
 
 import fnmatch
@@ -164,7 +165,9 @@ def _is_excluded(
     default_hit = any(fnmatch.fnmatch(name, g) for g in EXCLUDED_FILE_GLOBS)
     if default_hit:
         if include and _matches(rel, posix, name, include):
-            logger.debug("Re-included {} via --include (overrode default exclude)", path)
+            logger.debug(
+                "Re-included {} via --include (overrode default exclude)", path
+            )
             return False
         logger.debug("Skipping {} (default exclude)", path)
         return True
@@ -352,7 +355,9 @@ def discover_data_files(
     return data_files
 
 
-def read_pyproject_section(config_path: Path | str, section: str = "pyrefactor") -> dict:
+def read_pyproject_section(
+    config_path: Path | str, section: str = "pyrefactor"
+) -> dict:
     """Read ``tool.<section>`` from a TOML file; {} when unreadable."""
     try:
         import tomllib

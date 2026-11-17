@@ -1,4 +1,5 @@
 """Parser tests: blocks, imports, docstrings, comments, guards."""
+
 from pyrefactor.parser import parse_module_file
 from pyrefactor.models import CONST, CLASS, FUNC, MAIN
 
@@ -132,5 +133,5 @@ def test_nested_import_rewritten_to_external_only(tmp_path):
         "def f():\n    import os\n    return os.sep\n",
     )
     fn = next(b for b in info.blocks if b.kind == FUNC)
-    nested = [o for o in fn.occs if o.kind == "nested_import"]
+    nested = [r for r in fn.refs if r.kind == "nested_import"]
     assert len(nested) == 1

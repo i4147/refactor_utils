@@ -1,4 +1,5 @@
 """Console entry points for the demo package."""
+
 import sys
 
 from .core import greet

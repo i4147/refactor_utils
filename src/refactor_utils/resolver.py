@@ -1,4 +1,10 @@
-"""Resolution pass: environments, dedupe, renaming and plan assembly."""
+"""Resolution pass: environments, dedupe, renaming and plan assembly.
+
+Renames are applied as node-level libcst transformations through
+:class:`pyrefactor.parser.RefWalker`, sharing the exact scope machinery the
+collection pass used.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -9,10 +15,13 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from .imports import build_import_section, render_import_line, sort_key
+import libcst as cst
+
+from .imports import build_import_section, sort_key
 from .logging_setup import logger
 from .models import CLASS, CONST, FUNC, MAIN, MISC, Block, ModuleInfo
 from .ordering import topo_order
+from .parser import RefWalker
 
 Target = tuple
 _RANK = {CONST: 0, MISC: 0, CLASS: 1, FUNC: 2}
@@ -81,11 +90,11 @@ def make_identifier(text: str, fallback: str = "mod") -> str:
     return out
 
 
-def _content_hash(source: bytes) -> str:
-    normalised = b"\n".join(
-        line.rstrip() for line in source.strip().splitlines() if line.strip()
+def _content_hash(block: Block) -> str:
+    normalised = "\n".join(
+        line.rstrip() for line in block.code().strip().splitlines() if line.strip()
     )
-    return hashlib.sha1(normalised).hexdigest()
+    return hashlib.sha1(normalised.encode("utf-8")).hexdigest()
 
 
 def _guard_body(text: str) -> list[str]:
@@ -332,9 +341,9 @@ class Resolver:
             specs = [s for s in mi.imports if s.module != "__future__"]
             nested: list = []
             for b in mi.blocks:
-                for occ in b.occs:
-                    if occ.kind == "nested_import":
-                        nested.extend(s for s in occ.specs if s.module != "__future__")
+                for ref in b.refs:
+                    if ref.kind == "nested_import":
+                        nested.extend(s for s in ref.specs if s.module != "__future__")
             nested_set = set(nested)
             nested_locals = self.nested_locals.setdefault(m, set())
             for spec in specs + nested:
@@ -392,13 +401,13 @@ class Resolver:
             proj: set = set()
             ext_keys: set = set()
             ext_refs: set = set()
-            for occ in b.occs:
-                if occ.kind == "name":
-                    tgt = env.get(occ.name)
-                    label = occ.name
-                elif occ.kind == "attr":
-                    tgt = self._resolve_dotted(b.module, occ.obj, occ.name)
-                    label = f"{occ.obj}.{occ.name}"
+            for ref in b.refs:
+                if ref.kind == "name":
+                    tgt = env.get(ref.name)
+                    label = ref.name
+                elif ref.kind == "attr":
+                    tgt = self._resolve_dotted(b.module, ref.obj, ref.name)
+                    label = f"{ref.obj}.{ref.name}"
                 else:
                     continue
                 if tgt is None:
@@ -406,10 +415,10 @@ class Resolver:
                 if tgt[0] == "def":
                     if tgt[1] is not b:
                         proj.add(tgt[1])
-                        if occ.eager:
+                        if ref.eager:
                             eager.add(tgt[1])
                 elif tgt[0] == "ext":
-                    if occ.kind == "name" and occ.name in self.nested_locals.get(
+                    if ref.kind == "name" and ref.name in self.nested_locals.get(
                         b.module, ()
                     ):
                         continue
@@ -421,9 +430,9 @@ class Resolver:
     def _dedupe(self) -> None:
         groups: dict = defaultdict(list)
         for b in self.blocks:
-            if not b.source.strip():
+            if not b.code().strip():
                 continue
-            groups[(b.kind, tuple(b.names), _content_hash(b.source))].append(b)
+            groups[(b.kind, tuple(b.names), _content_hash(b))].append(b)
         for key, blocks in groups.items():
             if len(blocks) < 2:
                 continue
@@ -555,48 +564,17 @@ class Resolver:
         return None
 
     def _render_block(self, b: Block) -> str:
-        env = self.env[b.module]
-        edits: list[tuple[int, int, str]] = []
-        for occ in b.occs:
-            if occ.kind == "nested_import":
-                internal = [s for s in occ.specs if self._is_internal(s)]
-                if internal:
-                    lines = [
-                        render_import_line(s)
-                        for s in occ.specs
-                        if not self._is_internal(s)
-                    ]
-                    edits.append(
-                        (
-                            occ.start,
-                            occ.end,
-                            ("\n" + occ.obj).join(lines) if lines else "pass",
-                        )
-                    )
-                continue
-            if occ.kind == "name":
-                new = self._target_name(env.get(occ.name), occ.name)
-                if new is None or new == occ.name:
-                    continue
-            else:
-                new = self._target_name(
-                    self._resolve_dotted(b.module, occ.obj, occ.name), None
-                )
-                if new is None:
-                    continue
-            edits.append((occ.start, occ.end, new))
-        edits.sort(key=lambda e: (e[0], -e[1]))
-        out: list = []
-        pos = 0
-        last_end = -1
-        for s, e, r in edits:
-            if s < last_end:
-                continue
-            out.append(b.source[pos:s])
-            out.append(r.encode())
-            pos = last_end = e
-        out.append(b.source[pos:])
-        return b"".join(out).decode("utf-8", "replace").strip("\n").rstrip()
+        """Rewrite a block via the CST renamer (same scopes as collection)."""
+        walker = RefWalker(
+            b.module,
+            self.modules[b.module].is_pkg,
+            collect=False,
+            resolver=self,
+            env=self.env[b.module],
+        )
+        tree = cst.Module(body=list(b.nodes))
+        rewritten = tree.visit(walker)
+        return rewritten.code.strip("\n").rstrip()
 
     def _render_all(self, kept: list) -> dict[int, str]:
         if self.workers > 1 and len(kept) > 32:

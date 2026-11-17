@@ -1,5 +1,6 @@
 """End-to-end consolidation tests: the consolidated file must be a working
 drop-in replacement for the original package."""
+
 import json
 import subprocess
 import sys
@@ -79,7 +80,9 @@ def test_run_consolidated_file_as_script(make_project, tmp_path):
 
 
 def test_imports_pruned_to_what_is_used(make_project, tmp_path):
-    src = make_project({**MULTI, "extra.py": "import os\nimport sys\n\nUSED = os.sep\n"})
+    src = make_project(
+        {**MULTI, "extra.py": "import os\nimport sys\n\nUSED = os.sep\n"}
+    )
     result = consolidate(src, tmp_path / "out", force=True)
     text = result.files[0].read_text(encoding="utf-8")
     assert "import os" in text
@@ -188,3 +191,60 @@ def test_self_consolidation(tmp_path):
     (little / "m.py").write_text("V = 2\n", encoding="utf-8")
     r2 = consolidated.consolidate(little, tmp_path / "out2", force=True)
     assert r2.files[0].read_text().strip().endswith("V = 2")
+
+
+def test_comments_travel_with_blocks(make_project, tmp_path):
+    """libcst: comments attached to a statement move with its block."""
+    src = make_project(
+        {
+            "__init__.py": "from .m import run\n",
+            "m.py": (
+                "# run does the thing\n"
+                "def run():\n"
+                "    # inner note\n"
+                "    return MAGIC\n"
+                "\nMAGIC = 5\n"
+            ),
+        }
+    )
+    result = consolidate(src, tmp_path / "out", force=True)
+    text = result.files[0].read_text(encoding="utf-8")
+    assert "# run does the thing" in text
+    assert "# inner note" in text
+
+
+def test_bindings_not_rewritten(make_project, tmp_path):
+    """for/with/except/walrus targets must shadow module-level names."""
+    src = make_project(
+        {
+            "__init__.py": "from .m import check\n",
+            "m.py": (
+                "value = 'module'\n"
+                "\n"
+                "def check() -> str:\n"
+                "    out = []\n"
+                "    for value in range(3):\n"
+                "        out.append(value)\n"
+                "    with open(__file__) as fh:\n"
+                "        data = fh.read()\n"
+                "    try:\n"
+                "        raise ValueError\n"
+                "    except ValueError as value:\n"
+                "        out.append(str(value))\n"
+                "    if (value := 'walrus'):\n"
+                "        out.append(value)\n"
+                "    return str(out) + str(value) + str(len(data))\n"
+            ),
+        }
+    )
+    result = consolidate(src, tmp_path / "out", force=True)
+    consolidated = load_module_from_file(result.files[0], "consolidated_bind")
+    text = result.files[0].read_text(encoding="utf-8")
+    # binding positions stay untouched (2.x rewrote them as name references)
+    assert "for value in range(3)" in text
+    assert "except ValueError as value:" in text
+    assert "(value := 'walrus')" in text
+    out = consolidated.check()
+    # all loop/walrus bindings still bind locally
+    assert "'walrus'" in out
+    assert out.startswith("[0, 1, 2")

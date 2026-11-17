@@ -1,4 +1,5 @@
 """Core logic of the demo package."""
+
 import json
 import sys
 from pathlib import Path

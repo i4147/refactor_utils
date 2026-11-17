@@ -8,6 +8,7 @@ Fixes compared to the previous revision:
   (``embed_data=True``): text files as plain text, binary files as base64.
 * Config-file handling no longer duplicates the TOML reader.
 """
+
 from __future__ import annotations
 
 import ast
@@ -62,7 +63,7 @@ class ConsolidationResult:
 
 
 def _parse_worker(args: tuple):
-    (path_str, module, is_pkg, keep_docstrings, keep_comments) = args
+    path_str, module, is_pkg, keep_docstrings, keep_comments = args
     info = parse_module_file(
         path_str,
         module,

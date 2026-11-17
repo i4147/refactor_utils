@@ -1,4 +1,5 @@
 """CLI tests (in-process via main(argv))."""
+
 import json
 
 from pyrefactor.cli import main
