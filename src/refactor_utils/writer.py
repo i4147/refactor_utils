@@ -1,5 +1,3 @@
-"""Final rendering of the consolidated file."""
-
 from __future__ import annotations
 
 import os

@@ -1,14 +1,3 @@
-"""Core consolidation pipeline.
-
-Fixes compared to the previous revision:
-* ``ConsolidationResult`` now declares its dataclass fields properly (the
-  old annotation-less version produced field-less dataclasses whose
-  positional construction raised ``TypeError``).
-* Data files can be embedded into the consolidated module
-  (``embed_data=True``): text files as plain text, binary files as base64.
-* Config-file handling no longer duplicates the TOML reader.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -40,13 +29,11 @@ from .writer import render_consolidated
 
 
 class ConsolidationError(RuntimeError):
-    """Raised when a source tree cannot be consolidated safely."""
+    pass
 
 
 @dataclass(slots=True)
 class ConsolidationResult:
-    """Outcome of a consolidation run."""
-
     output_dir: Path
     files: list
     modules: int
@@ -226,7 +213,6 @@ def consolidate(
     main_name: str | None = None,
     generate_guard: bool = False,
 ) -> ConsolidationResult:
-    """Consolidate *source* into a single dependency-ordered python file."""
     cfg = _load_config_file(config, source)
     if cfg:
         if not exclude:

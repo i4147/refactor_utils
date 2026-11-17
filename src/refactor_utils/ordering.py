@@ -1,5 +1,3 @@
-"""Deterministic dependency ordering of blocks (topological sort)."""
-
 from __future__ import annotations
 
 import heapq
@@ -17,12 +15,6 @@ def topo_order(
     rank: Callable[[Block], int],
     key: Callable[[Block], tuple],
 ) -> list[Block]:
-    """Order *nodes* so eager dependencies come first.
-
-    When a dependency cycle makes a strict order impossible, the node with
-    the fewest unresolved dependencies is emitted anyway (with a warning) so
-    consolidation never dead-loops.
-    """
     by_id = {b.bid: b for b in nodes}
     pending = {
         b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid}
@@ -54,7 +46,6 @@ def topo_order(
         if not ranks:
             candidates = [i for i in pending if i not in done and i not in queued]
             if not candidates:
-                # Should not happen, but never loop forever.
                 candidates = [i for i in pending if i not in done]
                 if not candidates:
                     break

@@ -1,5 +1,3 @@
-"""pyrefactor — consolidate a python package into a single-file equivalent."""
-
 from .core import (
     ConsolidationError,
     ConsolidationResult,

@@ -1,19 +1,3 @@
-"""libcst-based module parser producing blocks and references.
-
-The 3.x parser replaces the tree-sitter byte-offset approach with a
-concrete-syntax-tree pipeline:
-
-* blocks hold libcst statement nodes; attached comments and blank lines live
-  in the statement's ``leading_lines`` and therefore travel with the block
-  automatically (no manual ``_extent``-style comment pulling);
-* all rewrites happen later as node-level CST transformations, so there are
-  no byte offsets that could get out of sync when docstrings or comments are
-  stripped — the old class of corruption bugs is gone by construction;
-* bindings (``for``/``with``/``except`` targets, walrus, match captures,
-  comprehension targets) are scoped correctly instead of being rewritten as
-  if they were references.
-"""
-
 from __future__ import annotations
 
 import ast
@@ -71,25 +55,22 @@ _STR_RE = re.compile(r"""['"]([A-Za-z_][A-Za-z0-9_]*)['"]""")
 _COMPOUND = (
     cst.If,
     cst.Try,
-    cst.For,  # covers async for (asynchronous flag)
+    cst.For,
     cst.While,
-    cst.With,  # covers async with (asynchronous flag)
+    cst.With,
     cst.Match,
 )
 
 
 def render_stmt(node: cst.CSTNode) -> str:
-    """Render a statement (or list of statements) as top-level code."""
     return cst.Module(body=[node]).code
 
 
 def render_expr(node: cst.Expression) -> str:
-    """Render an expression node as a one-line string."""
     return render_stmt(cst.SimpleStatementLine(body=[cst.Expr(value=node)])).strip()
 
 
 def _dotted(node) -> str | None:
-    """Dotted name for Name/Attribute chains (import targets, attr roots)."""
     if isinstance(node, cst.Name):
         return node.value
     if isinstance(node, cst.Attribute):
@@ -108,7 +89,6 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
 def parse_import(
     stmt: cst.CSTNode, module: str, is_pkg: bool, type_checking: bool = False
 ) -> list[ImportSpec]:
-    """Extract :class:`ImportSpec` entries from an import statement node."""
     if isinstance(stmt, cst.Import):
         specs = []
         for alias in stmt.names:
@@ -149,7 +129,6 @@ def parse_import(
 
 
 def _is_bare_string(value) -> bool:
-    """True for plain string expressions (docstrings / module constants)."""
     if isinstance(value, cst.SimpleString):
         return True
     if isinstance(value, cst.FormattedString):
@@ -173,7 +152,6 @@ def _param_names(params: cst.Parameters) -> set[str]:
 
 
 def _lhs_names(node) -> list[str] | None:
-    """Names bound by an assignment target; None when not a simple name list."""
     if isinstance(node, cst.Name):
         return [node.value]
     if isinstance(node, (cst.Tuple, cst.List)):
@@ -191,7 +169,6 @@ def _lhs_names(node) -> list[str] | None:
 
 
 def _target_names(stmt) -> list[str] | None:
-    """Names bound by an Assign/AugAssign/AnnAssign, or None."""
     if isinstance(stmt, cst.Assign):
         names: list[str] = []
         for target in stmt.targets:
@@ -206,7 +183,6 @@ def _target_names(stmt) -> list[str] | None:
 
 
 def _name_ids(node) -> set[int]:
-    """ids of every Name node inside *node* (used to skip binding targets)."""
     out: set[int] = set()
     stack = [node]
     while stack:
@@ -219,7 +195,6 @@ def _name_ids(node) -> set[int]:
 
 
 def _match_binding_ids(pattern) -> set[int]:
-    """ids of Name nodes that BIND inside a match pattern (captures/rest)."""
     out: set[int] = set()
     stack = [pattern]
     while stack:
@@ -236,7 +211,6 @@ def _match_binding_ids(pattern) -> set[int]:
 
 
 def _scan_imports_defs(node) -> tuple[list, bool]:
-    """(import nodes, has function/class defs) anywhere inside *node*."""
     imports: list = []
     has_def = False
     stack = [node]
@@ -253,7 +227,6 @@ def _scan_imports_defs(node) -> tuple[list, bool]:
 
 
 def _bound_names(node) -> list[str]:
-    """Names bound anywhere inside a compound statement (verbatim blocks)."""
     names: list[str] = []
     stack = [node]
     while stack:
@@ -271,7 +244,6 @@ def _bound_names(node) -> list[str]:
 
 
 def _string_literals(node) -> list[str]:
-    """String literal values inside *node* (for ``__all__`` handling)."""
     found: list[str] = []
     stack = [node]
     while stack:
@@ -289,7 +261,6 @@ def _string_literals(node) -> list[str]:
 
 
 def _collect_all_stmt(small, info: ModuleInfo) -> bool:
-    """Handle ``__all__`` assignments / mutations; True when consumed."""
     if isinstance(small, cst.Assign) and len(small.targets) == 1:
         target = small.targets[0].target
         if isinstance(target, cst.Name) and target.value == "__all__":
@@ -315,8 +286,6 @@ def _collect_all_stmt(small, info: ModuleInfo) -> bool:
 
 
 class _DocstringStripper(cst.CSTTransformer):
-    """Remove module / class / function docstring statements."""
-
     @staticmethod
     def _is_doc_line(stmt) -> bool:
         return (
@@ -361,9 +330,6 @@ class _DocstringStripper(cst.CSTTransformer):
 
 
 class _CommentStripper(cst.CSTTransformer):
-    """Remove comments while keeping code structure (shebang included in the
-    module header, which is dropped during extraction anyway)."""
-
     def leave_EmptyLine(self, original_node, updated_node):
         if updated_node.comment is not None:
             return cst.RemovalSentinel.REMOVE
@@ -378,8 +344,6 @@ class _CommentStripper(cst.CSTTransformer):
 
 
 class _Ctx:
-    """Traversal context: laziness (import-time vs runtime) and shadowing."""
-
     __slots__ = ("lazy", "shadow", "cls")
 
     def __init__(self, lazy: bool, shadow: frozenset, cls: bool):
@@ -389,14 +353,6 @@ class _Ctx:
 
 
 class RefWalker(cst.CSTTransformer):
-    """Walk a block collecting refs and/or applying renames.
-
-    ``collect=True`` records :class:`Ref` items (used for dependency
-    ordering); ``collect=False`` rewrites names/attributes/nested imports
-    using the resolver's environment. Both modes share the exact same scope
-    machinery, so what is *measured* is also what is *rewritten*.
-    """
-
     def __init__(
         self,
         module: str,
@@ -420,9 +376,6 @@ class RefWalker(cst.CSTTransformer):
         self._frames: list[dict] = []
         self._cls_pops: list[int] = []
 
-    # ------------------------------------------------------------------
-    # scope machinery
-    # ------------------------------------------------------------------
     def visit_FunctionDef(self, node) -> bool:
         self._skip.add(id(node.name))
         self._frames.append(
@@ -458,8 +411,6 @@ class RefWalker(cst.CSTTransformer):
             frame = self._frames[-1]
             if frame["params"] is None:
                 frame["params"] = frozenset(_param_names(node))
-        # Param names are bindings, not references (defaults and annotations
-        # stay in the enclosing scope and keep being collected).
         for group in (node.params, node.posonly_params, node.kwonly_params):
             for p in group:
                 self._skip.add(id(p.name))
@@ -511,9 +462,6 @@ class RefWalker(cst.CSTTransformer):
         self._ctxs.pop()
         return updated_node
 
-    # ------------------------------------------------------------------
-    # binding positions that must NOT be rewritten
-    # ------------------------------------------------------------------
     def visit_ExceptHandler(self, node) -> bool:
         if node.name is not None:
             self._skip.add(id(node.name))
@@ -560,8 +508,6 @@ class RefWalker(cst.CSTTransformer):
         return True
 
     def visit_Import(self, node) -> bool:
-        # libcst does not call leave_* when visit_* returns False, so we
-        # descend but skip every Name inside (aliases are not references).
         self._skip |= _name_ids(node)
         return True
 
@@ -569,9 +515,6 @@ class RefWalker(cst.CSTTransformer):
         self._skip |= _name_ids(node)
         return True
 
-    # ------------------------------------------------------------------
-    # reference collection / rewriting
-    # ------------------------------------------------------------------
     def leave_Name(self, original_node, updated_node):
         if id(original_node) in self._skip:
             return updated_node
@@ -684,7 +627,6 @@ def _make_block(info, by_name, warned, kind, names, node, start, end) -> None:
 
 
 def _add_compound(info, by_name, warned, stmt, start, end) -> None:
-    """Compound statement: import guard when possible, verbatim MISC else."""
     code = render_stmt(stmt)
     imports, has_def = _scan_imports_defs(stmt)
     if imports and not has_def:
@@ -704,7 +646,6 @@ def _add_compound(info, by_name, warned, stmt, start, end) -> None:
 
 
 def _add_simple(info, by_name, warned, small, start, end, lead, trailing) -> None:
-    """One small statement of a module-level simple statement line."""
     if isinstance(small, (cst.Import, cst.ImportFrom)):
         info.imports.extend(parse_import(small, info.module, info.is_pkg))
         return
@@ -735,11 +676,10 @@ def _add_simple(info, by_name, warned, small, start, end, lead, trailing) -> Non
 
 
 def _add_type_checking(info, by_name, warned, node, positions) -> None:
-    """Extract imports and definitions from ``if TYPE_CHECKING:`` bodies."""
     if isinstance(node.body, cst.IndentedBlock):
         body_start = positions[node.body].start.line
         body_stmts = list(node.body.body)
-    else:  # one-liner ``if TYPE_CHECKING: import x``
+    else:
         body_start = positions[node].start.line
         body_stmts = [cst.SimpleStatementLine(body=[s]) for s in node.body.body]
     for s in body_stmts:
@@ -793,12 +733,8 @@ def _add_type_checking(info, by_name, warned, node, positions) -> None:
 
 def _extract(info: ModuleInfo, tree: cst.Module, positions: dict) -> None:
     body = list(tree.body)
-    # positions were resolved on the original tree; remember lines by id so
-    # the header hoist below (which replaces body[0]) never KeyErrors.
     starts = {id(s): positions[s].start.line for s in body}
     if tree.header and body:
-        # Comments at the top of the file travel with the first statement,
-        # mirroring the old comment-pulling behaviour.
         first = body[0]
         body[0] = first.with_changes(leading_lines=(*tree.header, *first.leading_lines))
         starts[id(body[0])] = starts[id(first)]
@@ -868,12 +804,6 @@ def _extract(info: ModuleInfo, tree: cst.Module, positions: dict) -> None:
 
 
 def _detect_runtime_semantics(info: ModuleInfo, text: str) -> None:
-    """Warn about dunder / resource-loading usage outside ``__main__`` guards.
-
-    Dunder warnings are ref-based: every module with a plain
-    ``if __name__ == "__main__":`` guard legitimately references ``__name__``
-    inside the guard block, so MAIN blocks are excluded from the scan.
-    """
     seen: set[str] = set()
     for block in info.blocks:
         if block.kind == MAIN:
@@ -934,7 +864,7 @@ def parse_module_file(
         detail = getattr(exc, "message", None) or str(exc)
         info.errors.append(f"{path_str}: syntax error: {detail}")
         return info
-    except Exception as exc:  # unexpected parser failure
+    except Exception as exc:
         info.errors.append(f"{path_str}: parse failed: {exc!r}")
         return info
     try:

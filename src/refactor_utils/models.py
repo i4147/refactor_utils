@@ -1,11 +1,3 @@
-"""Data models shared across the consolidator.
-
-The 3.x series is built on **libcst**: blocks hold their concrete-syntax-tree
-statement nodes instead of raw source bytes with byte-offset occurrences.
-Rewrites are node-level CST transformations, so there is no offset bookkeeping
-left to get out of sync.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,7 +5,6 @@ from pathlib import Path
 
 import libcst as cst
 
-# Block kinds
 CONST = "const"
 CLASS = "class"
 FUNC = "func"
@@ -23,8 +14,6 @@ MAIN = "main"
 
 @dataclass(frozen=True)
 class ImportSpec:
-    """One parsed import statement entry."""
-
     module: str
     name: str | None = None
     alias: str | None = None
@@ -44,15 +33,6 @@ class ImportSpec:
 
 @dataclass
 class Ref:
-    """A reference inside a block that may need rewriting or ordering.
-
-    ``kind`` is ``"name"`` (a bare identifier), ``"attr"`` (the attribute of a
-    dotted chain rooted at ``obj``) or ``"nested_import"`` (an import statement
-    inside the block). ``eager`` marks references that evaluate at import time
-    (module level, class bodies, decorators, parameter defaults) and therefore
-    constrain the emit order.
-    """
-
     name: str
     kind: str
     eager: bool = True
@@ -62,13 +42,6 @@ class Ref:
 
 @dataclass(eq=False)
 class Block:
-    """A chunk of a module (class, function, const, ...).
-
-    ``nodes`` holds the libcst statement nodes that make up the block,
-    including their ``leading_lines`` so attached comments and blank lines
-    travel with the block.
-    """
-
     module: str
     kind: str
     names: list[str]
@@ -85,7 +58,6 @@ class Block:
         return self.names[0] if self.names else ""
 
     def code(self) -> str:
-        """Rendered source of the block (lossless, incl. leading comments)."""
         if not self.nodes:
             return ""
         return cst.Module(body=list(self.nodes)).code
@@ -104,8 +76,6 @@ class Block:
 
 @dataclass
 class GuardBlock:
-    """A module-level conditional (try/if) import guard kept verbatim."""
-
     text: str
     specs: list[ImportSpec] = field(default_factory=list)
     bound_names: list[str] = field(default_factory=list)
@@ -114,8 +84,6 @@ class GuardBlock:
 
 @dataclass
 class ModuleInfo:
-    """Parsed representation of one source module."""
-
     module: str
     path: str
     is_pkg: bool = False
@@ -130,8 +98,6 @@ class ModuleInfo:
 
 @dataclass(frozen=True)
 class SourceFile:
-    """A discovered Python source file."""
-
     path: Path
     module: str
     is_pkg: bool = False
@@ -139,8 +105,6 @@ class SourceFile:
 
 @dataclass(frozen=True)
 class DataFile:
-    """A discovered non-Python (data) file."""
-
     path: Path
     relative: str
     kind: str = "data"

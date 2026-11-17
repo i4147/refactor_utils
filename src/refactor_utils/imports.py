@@ -1,5 +1,3 @@
-"""Import-section rendering helpers."""
-
 from __future__ import annotations
 
 import sys
@@ -57,7 +55,6 @@ def future_section(names: Iterable[str]) -> str:
 
 
 def build_import_section(keys: set, ext_final: dict) -> str:
-    """Render the top-of-file import section from external import keys."""
     plain: dict[int, set[tuple[str, str | None]]] = defaultdict(set)
     froms: dict[int, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for key in keys:

@@ -1,5 +1,3 @@
-"""File discovery: python sources, data files and pyproject config."""
-
 from __future__ import annotations
 
 import fnmatch
@@ -116,7 +114,6 @@ DATA_FILENAMES = {
 
 
 def detect_base(root: Path) -> Path:
-    """Locate the import root for *root* (parent of a package, ``src``, or itself)."""
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"
@@ -248,7 +245,6 @@ def discover(
     include: Iterable[str] = (),
     follow_symlinks: bool = False,
 ) -> list[SourceFile]:
-    """Find all python source files under *root* and name their modules."""
     root = Path(root).resolve()
     if root.is_file():
         module = root.stem
@@ -281,13 +277,6 @@ def discover_data_files(
     copy_data: bool = True,
     collect: bool | None = None,
 ) -> list[DataFile]:
-    """Find data (non-python) files under *root*.
-
-    Relative paths are computed against the *walk root* — i.e. the directory
-    the user pointed at — so that code using ``Path(__file__).parent /
-    "data/x.json"`` keeps working after consolidation (previously they were
-    computed against the import base, adding a spurious package prefix).
-    """
     collect = copy_data if collect is None else collect
     if not collect:
         return []
@@ -339,8 +328,6 @@ def discover_data_files(
                     rel = entry.name
                 if exclude and _matches(rel, entry.as_posix(), entry.name, exclude):
                     continue
-                # Use fnmatch here: exact set membership silently ignored
-                # glob patterns such as "test_*.py".
                 if any(fnmatch.fnmatch(entry.name, g) for g in EXCLUDED_FILE_GLOBS):
                     if not (
                         include and _matches(rel, entry.as_posix(), entry.name, include)
@@ -358,7 +345,6 @@ def discover_data_files(
 def read_pyproject_section(
     config_path: Path | str, section: str = "pyrefactor"
 ) -> dict:
-    """Read ``tool.<section>`` from a TOML file; {} when unreadable."""
     try:
         import tomllib
     except ImportError:  # pragma: no cover - py<3.11
@@ -378,7 +364,6 @@ def read_pyproject_section(
 
 
 def detect_pyproject_config(root: Path | str) -> dict:
-    """Find the nearest pyproject.toml for *root* and return tool.pyrefactor."""
     cur = Path(root).resolve() if Path(root).exists() else Path.cwd()
     if cur.is_file():
         cur = cur.parent

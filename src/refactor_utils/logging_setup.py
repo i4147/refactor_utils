@@ -1,10 +1,3 @@
-"""Logging setup.
-
-Replaces the former ``loguru`` dependency with a thin stdlib-``logging``
-shim that keeps the same call surface used across the package
-(``logger.info("x {}", val)``, ``logger.success(...)``, ``logger.exception``).
-"""
-
 from __future__ import annotations
 
 import logging
@@ -42,8 +35,6 @@ def _fmt_message(message: object, args: tuple) -> str:
 
 
 class _ShimLogger:
-    """Small stand-in for the loguru logger API on top of stdlib logging."""
-
     def __init__(self, inner: logging.Logger) -> None:
         self._inner = inner
 
@@ -84,7 +75,6 @@ class _ShimLogger:
     def add(
         self, sink, level: str = "DEBUG", rotation=None, enqueue=False, format=None
     ):
-        """Register a sink (path-like or stream). Rotation/enqueue ignored."""
         if isinstance(sink, (str, bytes)) or hasattr(sink, "__fspath__"):
             handler: logging.Handler = logging.FileHandler(sink, encoding="utf-8")
         else:
@@ -102,7 +92,6 @@ logger = _ShimLogger(_ROOT_LOGGER)
 
 
 def setup_logging(level: str = "INFO", log_file=None) -> None:
-    """(Re)configure handlers: colored stderr + optional log file."""
     logger.remove()
     try:
         sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]

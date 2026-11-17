@@ -1,10 +1,3 @@
-"""Resolution pass: environments, dedupe, renaming and plan assembly.
-
-Renames are applied as node-level libcst transformations through
-:class:`pyrefactor.parser.RefWalker`, sharing the exact scope machinery the
-collection pass used.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -112,8 +105,6 @@ def _guard_body(text: str) -> list[str]:
 
 
 class Resolver:
-    """Turn parsed modules into a render plan for the consolidated file."""
-
     def __init__(
         self,
         modules: dict[str, ModuleInfo],
@@ -329,8 +320,6 @@ class Resolver:
         return kept
 
     def _build_envs(self) -> None:
-        # Pre-compute per-module definitions once instead of scanning the
-        # whole def_block table for every module (was O(modules x defs)).
         defs_by_module: dict[str, dict[str, Block]] = defaultdict(dict)
         for (mm, n), blk in self.def_block.items():
             defs_by_module[mm][n] = blk
@@ -564,7 +553,6 @@ class Resolver:
         return None
 
     def _render_block(self, b: Block) -> str:
-        """Rewrite a block via the CST renamer (same scopes as collection)."""
         walker = RefWalker(
             b.module,
             self.modules[b.module].is_pkg,
@@ -711,7 +699,6 @@ class Resolver:
         return plan
 
     def _module_all_names(self) -> list[str]:
-        """Map the top-level ``__all__`` (if any) onto consolidated names."""
         candidates = [
             (m, mi) for m, mi in self.modules.items() if mi.declared_all is not None
         ]

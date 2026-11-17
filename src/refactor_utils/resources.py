@@ -1,32 +1,9 @@
-"""Embedding data files into the consolidated module.
-
-New functionality: data files discovered next to the Python sources can be
-embedded directly into the generated single file so it is fully
-self-contained:
-
-* text data files (json, ini, yaml, csv, ...) are embedded as **plain text**
-  string literals, human-readable in the output;
-* non-text data files (fonts, sqlite, pickle, images, ...) are embedded as
-  **base64** string literals and decoded on access.
-
-The consolidated module exposes:
-
-* ``get_resource(name, *, encoding=None)`` — returns ``str`` for text
-  resources (or ``bytes`` with ``encoding=...``) and ``bytes`` for binary
-  resources (or ``str`` with ``encoding=...``);
-* ``resource_path(name)`` — a context manager that materialises a resource
-  into a temporary file (for APIs that require a real path, e.g. font
-  loaders);
-* ``list_resources()`` — sorted list of embedded resource names.
-"""
-
 from __future__ import annotations
 
 import base64
 from pathlib import Path
 from typing import Iterable, Sequence
 
-# Extensions that are definitely text (embedded verbatim).
 TEXT_RESOURCE_EXTENSIONS = {
     ".json",
     ".yaml",
@@ -58,7 +35,6 @@ TEXT_RESOURCE_EXTENSIONS = {
     ".crt",
     ".svg",
 }
-# Extensions that are definitely binary (embedded as base64).
 BINARY_RESOURCE_EXTENSIONS = {
     ".ttf",
     ".otf",
@@ -161,7 +137,6 @@ def {path_name}(name):
 
 
 def classify_resource(path: Path, raw: bytes | None = None) -> str:
-    """Return ``"text"`` or ``"binary"`` for a data file."""
     ext = path.suffix.lower()
     if ext in BINARY_RESOURCE_EXTENSIONS:
         return "binary"
@@ -184,7 +159,6 @@ def classify_resource(path: Path, raw: bytes | None = None) -> str:
 
 
 def _chunk_literal(value: str, chunk: int = 100) -> str:
-    """Render *value* as one or more adjacent string literals, short lines."""
     pieces = [value[i : i + chunk] for i in range(0, len(value), chunk)] or [""]
     rendered = [repr(p) for p in pieces]
     if len(rendered) == 1:
@@ -193,11 +167,6 @@ def _chunk_literal(value: str, chunk: int = 100) -> str:
 
 
 def _text_literal(text: str) -> str:
-    """Readable Python string literal for a text resource.
-
-    Keeps the original line structure visible: each line of the file becomes
-    its own (implicitly concatenated) literal.
-    """
     lines = text.split("\n")
     if len(lines) <= 1 and len(text) <= 100:
         return repr(text)
@@ -218,12 +187,6 @@ def build_resources_code(
     path_name: str = "resource_path",
     list_name: str = "list_resources",
 ) -> str:
-    """Build the python source for the bundled-resources section.
-
-    ``payloads`` is a sequence of ``(resource_name, raw_bytes)`` pairs where
-    ``resource_name`` is the path relative to the consolidated file (e.g.
-    ``"data/settings.json"``).
-    """
     taken = set(taken_names)
     base_for = {
         "get_resource": ("consolidated_get_resource", "_get_resource"),
