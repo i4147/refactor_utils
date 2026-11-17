@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from pyrefactor import consolidate  # noqa: E402
+from refactor_utils import consolidate  # noqa: E402
 
 DEMO = ROOT / "examples" / "demo_project" / "demo_pkg"
 
