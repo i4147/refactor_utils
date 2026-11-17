@@ -1,24 +1,35 @@
-"""Dependency-aware ordering of blocks."""
+"""Deterministic dependency ordering of blocks (topological sort)."""
+from __future__ import annotations
 
 import heapq
 from collections import defaultdict
-from typing import Callable, Mapping, Sequence
-from loguru import logger
+from typing import Callable, Iterable, Mapping
+
+from .logging_setup import logger
 from .models import Block
 from .imports import sort_key
 
 
 def topo_order(
-    nodes: Sequence[Block],
+    nodes: Iterable[Block],
     deps: Mapping[int, set[int]],
     rank: Callable[[Block], int],
     key: Callable[[Block], tuple],
 ) -> list[Block]:
+    """Order *nodes* so eager dependencies come first.
+
+    When a dependency cycle makes a strict order impossible, the node with
+    the fewest unresolved dependencies is emitted anyway (with a warning) so
+    consolidation never dead-loops.
+    """
     by_id = {b.bid: b for b in nodes}
-    pending = {b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid} for b in nodes}
-    # Tie-break equal (rank, key) entries by the first name, where names starting
-    # with ``_`` sort before alphanumeric ones, then by block id for stability.
-    name_key = {b.bid: (sort_key(b.primary) if b.primary else (1, "", ""), b.bid) for b in nodes}
+    pending = {
+        b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid}
+        for b in nodes
+    }
+    name_key = {
+        b.bid: (sort_key(b.primary) if b.primary else (1, "", ""), b.bid) for b in nodes
+    }
     dependents: dict[int, list[int]] = defaultdict(list)
     for bid, ds in pending.items():
         for d in ds:
@@ -40,8 +51,14 @@ def topo_order(
     while len(done) < len(nodes):
         ranks = [r for r, h in heaps.items() if h]
         if not ranks:
+            candidates = [i for i in pending if i not in done and i not in queued]
+            if not candidates:
+                # Should not happen, but never loop forever.
+                candidates = [i for i in pending if i not in done]
+                if not candidates:
+                    break
             cand = min(
-                (i for i in pending if i not in done and i not in queued),
+                candidates,
                 key=lambda i: (
                     len(pending[i]),
                     rank(by_id[i]),
@@ -49,7 +66,9 @@ def topo_order(
                     name_key[i],
                 ),
             )
-            blocked = ", ".join(sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand]))
+            blocked = ", ".join(
+                sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand])
+            )
             logger.warning(
                 "Circular import-time dependency: emitting {} ({}) before {}",
                 by_id[cand].primary or f"<{by_id[cand].kind}>",
@@ -58,7 +77,7 @@ def topo_order(
             )
             push(cand)
             continue
-        r = cur if heaps[cur] else min(ranks)
+        r = cur if heaps.get(cur) else min(ranks)
         cur = r
         bid = heapq.heappop(heaps[r])[-1]
         done.add(bid)

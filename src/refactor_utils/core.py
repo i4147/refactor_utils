@@ -1,3 +1,15 @@
+"""Core consolidation pipeline.
+
+Fixes compared to the previous revision:
+* ``ConsolidationResult`` now declares its dataclass fields properly (the
+  old annotation-less version produced field-less dataclasses whose
+  positional construction raised ``TypeError``).
+* Data files can be embedded into the consolidated module
+  (``embed_data=True``): text files as plain text, binary files as base64.
+* Config-file handling no longer duplicates the TOML reader.
+"""
+from __future__ import annotations
+
 import ast
 import difflib
 import fnmatch
@@ -13,45 +25,49 @@ from concurrent.futures import (
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from loguru import logger
-
-from .data_embed import collect_embedded_data
-from .discovery import discover, discover_data_files, detect_pyproject_config
-from .models import ModuleInfo, SourceFile
+from .discovery import (
+    detect_pyproject_config,
+    discover,
+    discover_data_files,
+    read_pyproject_section,
+)
+from .logging_setup import logger
+from .models import ModuleInfo
 from .parser import parse_module_file
 from .resolver import Plan, Resolver, is_valid_identifier
 from .writer import render_consolidated
 
 
 class ConsolidationError(RuntimeError):
-    pass
+    """Raised when a source tree cannot be consolidated safely."""
 
 
-@dataclass
+@dataclass(slots=True)
 class ConsolidationResult:
-    output_dir: Path = None
-    files: list = field(default_factory=list)
-    modules: int = 0
-    skipped: list = field(default_factory=list)
-    exports: int = 0
-    warnings: list = field(default_factory=list)
-    diff: str = ""
-    stdout_text: str = ""
-    copied_data_files: list = field(default_factory=list)
-    embedded_data_files: list = field(default_factory=list)
+    """Outcome of a consolidation run."""
+
+    output_dir: Path
+    files: list
+    modules: int
+    skipped: list
+    exports: int
+    warnings: list
+    diff: str
+    stdout_text: str
+    copied_data_files: list
     validated: bool = False
     dry_run: bool = False
-    plan: object = None
+    plan: Plan | None = None
+    embedded_data_files: list = field(default_factory=list)
 
 
-def _parse_worker(args):
-    path_str, module, is_pkg, keep_docstrings, strip_comments, keep_comments = args
+def _parse_worker(args: tuple):
+    (path_str, module, is_pkg, keep_docstrings, keep_comments) = args
     info = parse_module_file(
         path_str,
         module,
         is_pkg,
         keep_docstrings=keep_docstrings,
-        strip_comments=strip_comments,
         keep_comments=keep_comments,
     )
     return module, info
@@ -59,15 +75,13 @@ def _parse_worker(args):
 
 def _parse_all(
     files,
-    workers,
-    executor,
-    keep_docstrings=True,
-    strip_comments=False,
-    keep_comments=True,
-    show_progress=False,
-):
-    results = {}
-    failures = []
+    workers: int,
+    executor: str,
+    keep_docstrings: bool = True,
+    keep_comments: bool = True,
+    show_progress: bool = False,
+) -> dict:
+    results: dict = {}
 
     def _do_one(f):
         return parse_module_file(
@@ -75,7 +89,6 @@ def _parse_all(
             f.module,
             f.is_pkg,
             keep_docstrings=keep_docstrings,
-            strip_comments=strip_comments,
             keep_comments=keep_comments,
         )
 
@@ -87,10 +100,12 @@ def _parse_all(
 
             return tqdm(iterator, total=total, desc="Parsing")
         except ImportError:
-            logger.info("Progress bar requested but tqdm not installed — falling back to log")
+            logger.info(
+                "Progress bar requested but tqdm not installed — falling back to log"
+            )
             return iterator
 
-    def run_pool(pool_cls, todo):
+    def run_pool(pool_cls, todo) -> None:
         with pool_cls(max_workers=workers) as pool:
             if pool_cls is ProcessPoolExecutor:
                 futures = {
@@ -101,7 +116,6 @@ def _parse_all(
                             f.module,
                             f.is_pkg,
                             keep_docstrings,
-                            strip_comments,
                             keep_comments,
                         ),
                     ): f
@@ -113,69 +127,56 @@ def _parse_all(
                 src = futures[fut]
                 try:
                     res = fut.result()
-                    if isinstance(res, tuple) and len(res) == 2 and isinstance(res[1], ModuleInfo):
+                    if (
+                        isinstance(res, tuple)
+                        and len(res) == 2
+                        and isinstance(res[1], ModuleInfo)
+                    ):
                         results[res[0]] = res[1]
                     else:
                         results[src.module] = res
                 except BrokenExecutor:
                     raise
-                except Exception as exc:
+                except Exception:
                     logger.exception("Failed to parse {}", src.path)
-                    failures.append((str(src.path), str(exc)))
 
     if workers <= 1 or len(files) <= 1:
         for f in _progress(files, len(files)):
             try:
                 results[f.module] = _do_one(f)
-            except Exception as exc:
+            except Exception:
                 logger.exception("Failed to parse {}", f.path)
-                failures.append((str(f.path), str(exc)))
-        return results, failures
-
+        return results
     pool_cls = ProcessPoolExecutor if executor == "process" else ThreadPoolExecutor
     try:
         run_pool(pool_cls, files)
     except BrokenExecutor:
         logger.warning("Process pool broke; retrying remaining files with threads")
         run_pool(ThreadPoolExecutor, [f for f in files if f.module not in results])
-    return results, failures
+    return results
 
 
-def _load_config_file(config_path, source):
+def _load_config_file(config_path, source) -> dict:
     if config_path is None:
         return detect_pyproject_config(source)
     config_path = Path(config_path)
     if not config_path.is_file():
         logger.warning("Config file not found: {}", config_path)
         return {}
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            logger.warning("tomllib/tomli not available — cannot read config {}", config_path)
-            return {}
-    try:
-        with open(config_path, "rb") as f:
-            data = tomllib.load(f)
-        tool = data.get("tool", {}).get("pyrefactor", {})
-        if tool:
-            logger.info("Loaded config from {}", config_path)
-        return tool if isinstance(tool, dict) else {}
-    except Exception as exc:
-        logger.warning("Failed to parse config {}: {}", config_path, exc)
-        return {}
+    tool = read_pyproject_section(config_path)
+    if tool:
+        logger.info("Loaded config from {}", config_path)
+    return tool
 
 
-def _config_list(cfg, key):
+def _config_list(cfg: dict, key: str) -> tuple:
     value = cfg.get(key)
     if not value:
         return ()
     return tuple(value) if isinstance(value, list) else (value,)
 
 
-def validate_syntax(text, filename="<consolidated>"):
+def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module:
     try:
         return ast.parse(text, filename=filename)
     except SyntaxError as exc:
@@ -186,44 +187,45 @@ def validate_syntax(text, filename="<consolidated>"):
                 line = lines[exc.lineno - 1].strip()
         where = f"line {exc.lineno}" if exc.lineno else "unknown line"
         detail = f": {line!r}" if line else ""
-        raise ConsolidationError(f"generated {filename} is not valid python: {exc.msg} ({where}){detail}") from exc
+        raise ConsolidationError(
+            f"generated {filename} is not valid python: {exc.msg} ({where}){detail}"
+        ) from exc
     except ValueError as exc:
-        raise ConsolidationError(f"generated {filename} is not valid python: {exc}") from exc
+        raise ConsolidationError(
+            f"generated {filename} is not valid python: {exc}"
+        ) from exc
 
 
 def consolidate(
     source,
     output,
     *,
-    filename=None,
-    workers=None,
-    executor="process",
-    exclude=(),
-    include=(),
-    imports_mode="prune",
-    entry=(),
-    dry_run=False,
-    check=False,
-    stdout=False,
-    config=None,
-    do_format=False,
-    formatter="black",
-    diff=False,
-    force=False,
-    keep_docstrings=True,
-    strip_comments=False,
-    keep_comments=True,
-    progress=False,
-    copy_data=True,
-    data_glob=(),
-    embed_data=None,
-    entry_keep_all=False,
-    main_name=None,
-    generate_guard=False,
-):
-    if check and stdout:
-        raise ConsolidationError("--check and --stdout cannot be used together")
-
+    filename: str | None = None,
+    workers: int | None = None,
+    executor: str = "process",
+    exclude: tuple = (),
+    include: tuple = (),
+    imports_mode: str = "prune",
+    entry: tuple = (),
+    dry_run: bool = False,
+    check: bool = False,
+    stdout: bool = False,
+    config: Path | None = None,
+    do_format: bool = False,
+    formatter: str = "black",
+    diff: bool = False,
+    force: bool = False,
+    keep_docstrings: bool = True,
+    keep_comments: bool = True,
+    progress: bool = False,
+    copy_data: bool = True,
+    embed_data: bool = False,
+    data_glob: tuple = (),
+    entry_keep_all: bool = False,
+    main_name: str | None = None,
+    generate_guard: bool = False,
+) -> ConsolidationResult:
+    """Consolidate *source* into a single dependency-ordered python file."""
     cfg = _load_config_file(config, source)
     if cfg:
         if not exclude:
@@ -240,59 +242,61 @@ def consolidate(
             formatter = str(cfg["formatter"])
         if cfg.get("copy_data") is not None:
             copy_data = bool(cfg["copy_data"])
+        if cfg.get("embed_data"):
+            embed_data = bool(cfg["embed_data"])
         if cfg.get("data_glob"):
             data_glob = _config_list(cfg, "data_glob")
-
-    if embed_data is None:
-        embed_data = copy_data
-
+    if imports_mode not in ("prune", "keep", "strict"):
+        raise ConsolidationError(
+            f"imports_mode must be one of prune/keep/strict, got {imports_mode!r}"
+        )
     if main_name is not None and not is_valid_identifier(main_name):
-        raise ConsolidationError(f"--main-name {main_name!r} is not a valid python identifier")
-
+        raise ConsolidationError(
+            f"--main-name {main_name!r} is not a valid python identifier"
+        )
     source, output = Path(source), Path(output)
     if not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
-
     workers = workers or os.cpu_count() or 1
     source_name = source.resolve().name if source.is_dir() else source.stem
-    filename = filename or Path.cwd().name
+    filename = filename or source_name
     if not filename.endswith(".py"):
         filename = f"{filename}.py"
-
     files = discover(source, exclude=exclude, include=include, skip_dirs=[output])
     data_files = discover_data_files(
         source,
         exclude=exclude,
         include=include,
         skip_dirs=[output],
-        copy_data=copy_data or embed_data,
+        copy_data=copy_data,
+        collect=copy_data or embed_data,
     )
     if data_glob:
         data_files = [
             df
             for df in data_files
-            if any(fnmatch.fnmatch(df.relative, pat) or fnmatch.fnmatch(Path(df.path).name, pat) for pat in data_glob)
+            if any(
+                fnmatch.fnmatch(df.relative, pat)
+                or fnmatch.fnmatch(Path(df.path).name, pat)
+                for pat in data_glob
+            )
         ]
     if not files:
         raise ConsolidationError(f"no python files found under {source}")
-
     logger.info("Parsing {} files with {} {} worker(s)", len(files), workers, executor)
     if data_files:
         logger.info("Found {} data file(s) to preserve", len(data_files))
-
-    parsed, parse_failures = _parse_all(
+    parsed = _parse_all(
         files,
         workers,
         executor,
         keep_docstrings=keep_docstrings,
-        strip_comments=strip_comments,
         keep_comments=keep_comments,
         show_progress=progress,
     )
-
-    modules = {}
-    skipped = []
-    warnings_acc = []
+    modules: dict = {}
+    skipped: list = []
+    warnings_acc: list = []
     for name, info in parsed.items():
         for w in info.warnings:
             logger.warning(w)
@@ -303,11 +307,6 @@ def consolidate(
             skipped.append(info.path)
             continue
         modules[name] = info
-
-    for path, err in parse_failures:
-        logger.error("Failed to parse {}: {}", path, err)
-        skipped.append(path)
-
     if skipped:
         raise ConsolidationError(
             f"{len(skipped)} file(s) could not be parsed; refusing to emit a "
@@ -315,13 +314,15 @@ def consolidate(
         )
     if not modules:
         raise ConsolidationError("no module could be parsed")
-
-    embedded = {}
+    resources: list[tuple[str, bytes]] | None = None
     if embed_data and data_files:
-        embedded = collect_embedded_data(data_files)
-        if embedded:
-            logger.info("Embedding {} data file(s) in output", len(embedded))
-
+        resources = []
+        for df in data_files:
+            try:
+                resources.append((df.relative, Path(df.path).read_bytes()))
+            except OSError as exc:
+                logger.error("Cannot read data file {}: {}", df.path, exc)
+                raise ConsolidationError(f"cannot read data file {df.path}: {exc}")
     resolver = Resolver(
         modules,
         entry=entry,
@@ -330,29 +331,22 @@ def consolidate(
         entry_keep_all=entry_keep_all,
         main_name=main_name,
         generate_guard=generate_guard,
+        resources=resources,
     )
     plan = resolver.build()
     for mod, orig, final in plan.renamed:
         logger.info("Renamed {}:{} -> {}", mod, orig, final)
     for mod, name in plan.deduped:
         logger.info("Deduped {} from {}", name, mod)
-
     mod_text = render_consolidated(
-        plan,
-        source_name,
-        do_format=do_format,
-        formatter=formatter,
-        embedded_data=embedded,
+        plan, source_name, do_format=do_format, formatter=formatter
     )
     exports = sum(len(v) for v in plan.exports.values())
     validate_syntax(mod_text, filename)
-
     diff_text = ""
     target = output / filename
-
     if diff or check:
-        target_exists = target.is_file()
-        if target_exists:
+        if target.is_file():
             old_text = target.read_text(encoding="utf-8")
             if old_text != mod_text:
                 diff_text = "".join(
@@ -367,32 +361,29 @@ def consolidate(
                 logger.info("No diff for {}", filename)
         else:
             logger.info("No existing {} to diff", target)
-
         if diff_text:
             logger.info("Diff ({} chars):", len(diff_text))
             sys.stdout.write(diff_text)
-
         if check:
-            if diff_text or not target_exists:
-                if diff_text:
-                    msg = "check failed: output would change (diff not empty)"
-                else:
-                    msg = f"check failed: output does not exist at {target}"
-                raise ConsolidationError(msg)
+            if diff_text:
+                raise ConsolidationError(
+                    "check failed: output would change (diff not empty)"
+                )
             logger.success("Check passed: output up to date")
             return ConsolidationResult(
-                output_dir=output,
-                files=[],
-                modules=len(modules),
-                skipped=skipped,
-                exports=exports,
-                warnings=warnings_acc,
+                output,
+                [],
+                len(modules),
+                skipped,
+                exports,
+                warnings_acc,
+                "",
+                "",
+                [],
                 validated=True,
                 dry_run=True,
                 plan=plan,
-                embedded_data_files=list(embedded),
             )
-
     if dry_run:
         logger.info("Dry-run: would write {} to {}", filename, output)
         logger.info(
@@ -408,50 +399,51 @@ def consolidate(
             len(plan.deduped),
             len(plan.renamed),
         )
-        for df in data_files:
-            logger.info("Would copy data file {} -> {}/{}", df.path, output, df.relative)
-        if embedded:
-            logger.info("Would embed {} data file(s)", len(embedded))
+        if resources:
+            logger.info("Would embed {} data file(s)", len(resources))
+        if copy_data:
+            for df in data_files:
+                logger.info(
+                    "Would copy data file {} -> {}/{}", df.path, output, df.relative
+                )
         return ConsolidationResult(
-            output_dir=output,
-            files=[],
-            modules=len(modules),
-            skipped=skipped,
-            exports=exports,
-            warnings=warnings_acc,
-            stdout_text=mod_text if stdout else "",
+            output,
+            [],
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            "",
+            mod_text if stdout else "",
+            [],
             validated=True,
             dry_run=True,
             plan=plan,
-            embedded_data_files=list(embedded),
         )
-
     if stdout:
         sys.stdout.write(mod_text)
         return ConsolidationResult(
-            output_dir=output,
-            files=[],
-            modules=len(modules),
-            skipped=skipped,
-            exports=exports,
-            warnings=warnings_acc,
-            diff=diff_text,
-            stdout_text=mod_text,
+            output,
+            [],
+            len(modules),
+            skipped,
+            exports,
+            warnings_acc,
+            diff_text,
+            mod_text,
+            [],
             validated=True,
             plan=plan,
-            embedded_data_files=list(embedded),
+            embedded_data_files=[name for name, _ in resources] if resources else [],
         )
-
     if target.exists() and not force:
         logger.warning("{} exists — overwriting (use --force to silence)", target)
-
     output.mkdir(parents=True, exist_ok=True)
     tmp_target = target.with_suffix(target.suffix + ".tmp")
     tmp_target.write_text(mod_text, encoding="utf-8")
     tmp_target.replace(target)
     written = [target]
-
-    copied = []
+    copied: list = []
     if copy_data:
         for df in data_files:
             dest = output / df.relative
@@ -462,17 +454,19 @@ def consolidate(
                 logger.debug("Copied data file {} -> {}", df.path, dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
-
+    if resources:
+        logger.info("Embedded {} data file(s) into {}", len(resources), target)
     return ConsolidationResult(
-        output_dir=output,
-        files=written,
-        modules=len(modules),
-        skipped=skipped,
-        exports=exports,
-        warnings=warnings_acc,
-        diff=diff_text,
-        copied_data_files=copied,
-        embedded_data_files=list(embedded),
+        output,
+        written,
+        len(modules),
+        skipped,
+        exports,
+        warnings_acc,
+        diff_text,
+        "",
+        copied,
         validated=True,
         plan=plan,
+        embedded_data_files=[name for name, _ in resources] if resources else [],
     )

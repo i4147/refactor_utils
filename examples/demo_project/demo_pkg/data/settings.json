@@ -1,0 +1,4 @@
+{
+  "greeting": "Greetings, {name}!",
+  "features": ["consolidation", "data-embedding"]
+}

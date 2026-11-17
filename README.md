@@ -1,192 +1,115 @@
-# refactor_utils
+# pyrefactor
 
-Consolidate a small/medium Python module, library or project into **one**
-dependency-ordered file.
+Consolidate a python module / package / project into a **single, dependency-ordered
+file** that works as a drop-in replacement for the original package, with optional
+**data-file embedding** so the result is fully self-contained.
 
 ```bash
-pip install -e .
-pyrefactor path/to/package        # writes ./output/<current-directory-name>.py
+pyrefactor src/my_pkg -o dist            # consolidated dist/my_pkg.py + copied data files
+pyrefactor src/my_pkg -o dist --embed-data --no-copy-data   # everything in one file
+pyrefactor src/my_pkg --stdout > single.py
+pyrefactor src/my_pkg -o dist --check    # CI mode: fail if the output would change
 ```
-
-A run without flags produces exactly one generated file:
-
-```
-$ cd myproject
-$ pyrefactor src/mypackage
-output/
-  myproject.py        # imports -> constants -> classes -> functions -> entry points
-```
-
-The file name is `Path.cwd().name` (override with `--name`). Data files that
-ship next to the code (`.json`, `.yaml`, `.csv`, `.ini`, …) are copied with
-their relative paths unless `--no-copy-data` is given.
 
 ## What it does
 
-- Parses every file with **tree-sitter** in parallel worker processes; skips
-  tests, `conftest.py`, `setup.py`, `__main__.py` and `iwgfyrkugf.py`
-  (re-include anything with `--include`, skip more with `-x/--exclude`).
-- Orders blocks by import-time dependencies (base classes, decorators,
-  defaults, class bodies, module-level calls), preferring constants → classes →
-  functions. Cycles are reported with a warning and emitted in dependency order.
-- Resolves same-named objects across modules using a **content hash**: bodies
-  that are byte-identical (ignoring blank lines/trailing spaces) are merged into
-  a single definition; bodies that differ keep both definitions and the
-  shallower module keeps the plain name while the others become
-  `<module_path>_<name>`. Generated names are always valid Python identifiers:
-  a module called `2.py` yields `m2_Tokenizer` (never `2_Tokenizer`),
-  `my-mod.py` yields `my_mod_…`, keywords get a trailing `_`. Every reference (`from .x import y as z`, `mod.attr`,
-  annotations, decorators, defaults) is rewritten accordingly.
-- Merges, prunes, de-duplicates and conflict-aliases imports
-  (`--imports prune|keep|strict`), grouping `__future__` / stdlib / third-party.
-  Names starting with `_` sort before alphanumeric names.
-- `if TYPE_CHECKING:` blocks are merged like the head import section: the
-  imports inside join the normal import section (deduplicated against imports
-  already present at the top of the file), and constants/classes/functions
-  defined under `TYPE_CHECKING` are extracted as ordinary blocks.
-- Module docstrings of the source files are pruned (the result carries one
-  generated docstring); class and function docstrings are kept.
-- `__all__` is never emitted as code. `__all__ = […]`, `__all__ += […]`,
-  `__all__.append(…)` and annotated forms are only read as hints and dropped;
-  the exported surface is recomputed from the surviving definitions.
-- `main` functions and `if __name__ == "__main__":` guards go to the end.
-  When several modules have their own guard, they are **merged into a single
-  guard** whose body runs each original entry point, annotated with the module
-  it came from — stacked guards would make every one but the first dead code.
-  Control which entries survive with `--entry MODULE` / `--entry-keep-all`, and
-  the names with `--main-name NAME` / `--generate-guard`.
-- **Syntax validation**: the generated module is parsed with `ast`
-  (`validate_syntax()`) before anything is written; a result that is not valid
-  Python is never emitted. The code is not executed or imported. A source file
-  that cannot be parsed aborts the run instead of degrading output.
-- Errors and warnings are logged with **loguru** (`--log-level`, `--log-file`).
+1. **Discovers** python sources (package layout, `src/` layout, or a single file)
+   plus data files (json/yaml/ini/csv/... and extension-less names like `LICENSE`).
+2. **Parses** every module with tree-sitter, splitting it into blocks
+   (constants, classes, functions, `__main__` guards, conditional import guards)
+   and recording every name reference with its byte range.
+3. **Resolves** internal imports: `from .core import Person` becomes a direct
+   reference to the definition. External imports are pruned to only what is
+   actually used (`--imports keep|prune|strict`), and name collisions between
+   modules are auto-renamed consistently at definition *and* every use site.
+4. **Orders** blocks topologically so module-level (import-time) dependencies
+   come first; entry points and `__main__` guards are merged at the bottom.
+5. **Renders** one valid python file (validated with `ast.parse` before writing)
+   and copies or embeds the data files.
 
-## CLI
+## Data files: copy vs embed
 
-```
-usage: pyrefactor [-h] [-o OUTPUT] [--name NAME] [-j WORKERS]
-                  [--executor {process,thread}] [--progress] [-x GLOB]
-                  [--include GLOB] [--copy-data | --no-copy-data]
-                  [--data-glob GLOB] [--entry MODULE] [--entry-keep-all]
-                  [--main-name NAME] [--generate-guard]
-                  [--imports {prune,keep,strict}]
-                  [--keep-docstrings | --no-keep-docstrings]
-                  [--keep-comments | --no-keep-comments] [--dry-run] [--check]
-                  [--stdout] [--diff] [--force] [--config PATH] [--format]
-                  [--formatter {black,ruff}]
-                  [--log-level {TRACE,DEBUG,INFO,WARNING,ERROR}]
-                  [--log-file LOG_FILE] [--version]
-                  source
+By default data files are **copied** next to the consolidated file
+(`--no-copy-data` to disable), preserving relative paths.
+
+`--embed-data` additionally (or instead) embeds them **inside** the consolidated
+file:
+
+* **text data files** (json, ini, yaml, toml, csv, txt, xml, ...) are embedded as
+  **plain text** string literals — still human-readable in the generated file;
+* **non-text data files** (fonts, sqlite, pickle, images, ...) are embedded as
+  **base64** string literals and decoded on access.
+
+The generated module then exposes:
+
+```python
+get_resource("data/settings.json")   # -> str (text) or bytes (binary)
+get_resource("data/settings.json", encoding="utf-8")  # force str/bytes conversion
+list_resources()                     # sorted names of embedded resources
+with resource_path("assets/logo.ttf") as path:   # real temp-file path
+    font = ImageFont.truetype(path, 24)
 ```
 
-| Flag | Default | Effect |
-|------|---------|--------|
-| `source` | — | package directory, project root or single `.py` file |
-| `-o, --output` | `output` | output directory |
-| `--name NAME` | current directory name | name of the generated file |
-| `-j, --workers` | CPU count | parallel parsing workers |
-| `--executor` | `process` | `process` or `thread` executor |
-| `--progress` | off | tqdm progress bar (falls back to log) |
-| `-x, --exclude GLOB` | — | extra globs to skip (repeatable), source-relative |
-| `--include GLOB` | — | re-include files/dirs excluded by default (`tests/*`, `conftest.py`, …) |
-| `--copy-data / --no-copy-data` | on | copy data files preserving relative paths |
-| `--data-glob GLOB` | — | only copy matching data files (repeatable) |
-| `--entry MODULE` | — | keep only the `__main__` guard of this module (repeatable) |
-| `--entry-keep-all` | off | keep every `__main__` guard |
-| `--main-name NAME` | — | rename `main` to `NAME` |
-| `--generate-guard` | off | synthesise `if __name__ == "__main__": main()` |
-| `--imports` | `prune` | `prune` = drop unused, `keep` = keep all, `strict` = prune + warn |
-| `--keep-docstrings / --no-keep-docstrings` | on | keep class/function docstrings (module docstrings are always pruned) |
-| `--keep-comments / --no-keep-comments` | on | keep comments |
-| `--dry-run` | off | print the plan, never write |
-| `--check` | off | fail (exit 2) if the output would change |
-| `--stdout` | off | print the generated module instead of writing |
-| `--diff` | off | print a unified diff against the existing output |
-| `--force` | off | silence the overwrite warning |
-| `--config PATH` | auto | `pyproject.toml` with a `[tool.pyrefactor]` section |
-| `--format` | off | run the formatter on the output |
-| `--formatter` | `black` | `black` or `ruff` |
-| `--log-level`, `--log-file`, `--version` | | logging and version |
+Source code that should work both as a package and consolidated can use the
+accessor if present and fall back to a file path otherwise:
 
-Removed in 2.0: `--mode`, `--validate`, `--validate-import`,
-`--allow-syntax-errors`, `--max-skipped`, `--source-map`, `--preserve-modules`,
-`--namespace`, `--all`, `--respect-all`, `--rename-strategy`, `--dedupe`,
-`--no-parallel`, `--jobs`, `--progress-bar`, `--overwrite`, `--keep-all-mains`,
-`--keep-unused-imports`, `--post-format`, `--pyproject`, `--setup-cfg`,
-`--strict`, `--fail-on-warning`, `--respect-all`. There is one layout, one
-dedupe strategy (content hash), one rename strategy (`<module>_<name>`) and
-the `ast` syntax check always runs.
-
-## Examples
-
-```bash
-# consolidate the current project into ./output/<cwd>.py
-pyrefactor .
-
-# keep the file name stable in CI
-pyrefactor src/mypackage --name mypackage --check
-
-# preview without writing anything
-pyrefactor src/mypackage --dry-run
-
-# skip vendored code, keep its data files
-pyrefactor . -x "vendor/*"
-
-# include the tests directory that is skipped by default
-pyrefactor . --include "tests/*"
-
-# format the result and drop comments
-pyrefactor . --format --formatter ruff --no-keep-comments
+```python
+def load_settings():
+    try:
+        import json
+        return json.loads(get_resource("data/settings.json"))   # consolidated file
+    except NameError:
+        return json.loads((Path(__file__).parent / "data" / "settings.json").read_text())
 ```
 
-## Configuration
+See `examples/demo_project` and `examples/run_demo.py` for a complete, runnable
+demo (including a "fake font" binary resource).
 
-`pyproject.toml` next to the source (or `--config PATH`):
+## Library API
+
+```python
+from pyrefactor import consolidate, validate_syntax, ConsolidationResult
+
+result = consolidate(
+    "src/my_pkg",
+    "dist",
+    embed_data=True,
+    copy_data=False,
+)
+result.files            # [dist/my_pkg.py]
+result.exports          # number of exported names
+result.embedded_data_files   # resource names embedded in the file
+result.plan.blocks      # rendered blocks with origin comments
+```
+
+Useful flags: `--entry MODULE` (keep only one `__main__` guard), `--main-name`
+(rename the entry function), `--generate-guard`, `--keep-docstrings=false`,
+`--keep-comments=false`, `--diff`, `--dry-run`, `--check`, `--format`
+(black/ruff), `-j/--workers`, `--executor process|thread`, `--progress`
+(needs tqdm).
+
+Configuration can come from a `pyproject.toml` next to the source:
 
 ```toml
 [tool.pyrefactor]
-exclude = ["tests/*"]
-include = []
-entry = []
+exclude = ["experimental/*"]
 imports = "prune"
-format = false
 copy_data = true
+embed_data = false
 data_glob = ["*.json"]
 ```
 
-CLI values win where they are explicit.
+## Dependencies
 
-## Architecture
+`tree-sitter` + `tree-sitter-python` (parsing). Optional: `tqdm` (progress),
+`black`/`ruff` (`--format`). Logging uses the standard library only.
 
-```
-cli.py → core.py orchestrates
-        → discovery.py (SourceFile + DataFile, pyproject awareness)
-        → parser.py (tree-sitter, parallel, TYPE_CHECKING flattening, __all__ detection)
-        → resolver.py (content-hash dedupe, collision renames, imports, ordering input)
-        → ordering.py (topo sort, deterministic tie-breaks)
-        → writer.py (single consolidated file)
-        → imports.py (import merging/sorting: `_private` names first)
-logging via logging_setup.py
-models.py — picklable dataclasses (Block, ModuleInfo, SourceFile, DataFile, ImportSpec, Occ)
+## Development
+
+```bash
+pip install -e .[dev]
+pytest
+python examples/run_demo.py
 ```
 
-The parser only emits `ModuleInfo`/`Block`/`Occ`, so worker payloads stay
-picklable and the resolver never touches tree-sitter nodes.
-
-## Known limits
-
-- Renaming is name-based: parameters and class bodies are scoped, other locals
-  are not (a full scope analysis is future work).
-- `__file__`/`__name__`/`__package__` semantics change in a single file
-  (warning logged; `importlib.resources` users may need `files()`).
-- Guarded imports (`try/except ImportError`, `if sys.platform …`) are kept
-  verbatim and may have side effects.
-- Dynamic `importlib`/`__import__` dependencies are warned about, not resolved.
-
-# repo address
-
-i4147/refactor_utils
-
-## License
-
-MIT
+See `CHANGES.md` for the list of fixes and improvements in this revision.
