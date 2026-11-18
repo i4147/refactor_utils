@@ -99,10 +99,13 @@ def setup_logging(level: str = "INFO", log_file=None) -> None:
         pass
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(logging.Formatter(_FMT, datefmt=_DATEFMT))
-    stream.setLevel(_LEVELS.get(str(level).upper(), logging.INFO))
-    logger._inner.setLevel(
-        min(logging.DEBUG, _LEVELS.get(str(level).upper(), logging.INFO))
-    )
+    requested = _LEVELS.get(str(level).upper(), logging.INFO)
+    # The stream handler enforces the user-requested level; the logger itself
+    # must sit at or below TRACE (5) so low-level records reach the handler.
+    # The previous code capped it at DEBUG=10, which silently dropped every
+    # TRACE message (level 5) before it ever reached the handler.
+    stream.setLevel(requested)
+    logger._inner.setLevel(min(requested, 5))
     logger._inner.addHandler(stream)
     if log_file is not None:
         logger.add(log_file, level="DEBUG")

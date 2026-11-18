@@ -15,6 +15,8 @@ from concurrent.futures import (
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import libcst as cst
+
 from .discovery import (
     detect_pyproject_config,
     discover,
@@ -22,7 +24,9 @@ from .discovery import (
     read_pyproject_section,
 )
 from .logging_setup import logger
+from .merged_file import load_merged_sources
 from .models import ModuleInfo
+from .modernize import modernize_tree
 from .parser import parse_module_file
 from .resolver import Plan, Resolver, is_valid_identifier
 from .writer import render_consolidated
@@ -212,6 +216,8 @@ def consolidate(
     entry_keep_all: bool = False,
     main_name: str | None = None,
     generate_guard: bool = False,
+    modernize: str | None = None,
+    merged_file: Path | str | None = None,
 ) -> ConsolidationResult:
     cfg = _load_config_file(config, source)
     if cfg:
@@ -233,6 +239,8 @@ def consolidate(
             embed_data = bool(cfg["embed_data"])
         if cfg.get("data_glob"):
             data_glob = _config_list(cfg, "data_glob")
+        if not modernize and cfg.get("modernize"):
+            modernize = str(cfg["modernize"])
     if imports_mode not in ("prune", "keep", "strict"):
         raise ConsolidationError(
             f"imports_mode must be one of prune/keep/strict, got {imports_mode!r}"
@@ -242,32 +250,47 @@ def consolidate(
             f"--main-name {main_name!r} is not a valid python identifier"
         )
     source, output = Path(source), Path(output)
-    if not source.exists():
+    merged_path: Path | None = Path(merged_file) if merged_file else None
+    if merged_path is not None:
+        if not merged_path.is_file():
+            raise ConsolidationError(f"merged file does not exist: {merged_path}")
+        # The merged file (# File: headers) is the real source of truth here;
+        # `source` is only used for config discovery / naming.
+    elif not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
     workers = workers or os.cpu_count() or 1
-    source_name = source.resolve().name if source.is_dir() else source.stem
+    if merged_path is not None:
+        source_name = merged_path.stem
+    else:
+        source_name = source.resolve().name if source.is_dir() else source.stem
     filename = filename or source_name
     if not filename.endswith(".py"):
         filename = f"{filename}.py"
-    files = discover(source, exclude=exclude, include=include, skip_dirs=[output])
-    data_files = discover_data_files(
-        source,
-        exclude=exclude,
-        include=include,
-        skip_dirs=[output],
-        copy_data=copy_data,
-        collect=copy_data or embed_data,
-    )
-    if data_glob:
-        data_files = [
-            df
-            for df in data_files
-            if any(
-                fnmatch.fnmatch(df.relative, pat)
-                or fnmatch.fnmatch(Path(df.path).name, pat)
-                for pat in data_glob
-            )
-        ]
+    if merged_path is not None:
+        files, _staged_root = load_merged_sources(merged_path)
+        # Data-file discovery is not meaningful for a merged-file input: the
+        # merged format only carries python sources.
+        data_files = []
+    else:
+        files = discover(source, exclude=exclude, include=include, skip_dirs=[output])
+        data_files = discover_data_files(
+            source,
+            exclude=exclude,
+            include=include,
+            skip_dirs=[output],
+            copy_data=copy_data,
+            collect=copy_data or embed_data,
+        )
+        if data_glob:
+            data_files = [
+                df
+                for df in data_files
+                if any(
+                    fnmatch.fnmatch(df.relative, pat)
+                    or fnmatch.fnmatch(Path(df.path).name, pat)
+                    for pat in data_glob
+                )
+            ]
     if not files:
         raise ConsolidationError(f"no python files found under {source}")
     logger.info("Parsing {} files with {} {} worker(s)", len(files), workers, executor)
@@ -329,6 +352,19 @@ def consolidate(
         plan, source_name, do_format=do_format, formatter=formatter
     )
     exports = sum(len(v) for v in plan.exports.values())
+    if modernize:
+        # Apply modernization passes (six -> py3, os.path -> pathlib) to the
+        # rendered tree. libcst round-trips so formatting is preserved; the
+        # result is re-validated below just like the unmodified output.
+        try:
+            tree = cst.parse_module(mod_text)
+            tree, report = modernize_tree(tree, modernize)
+            if report.changed:
+                mod_text = tree.code
+        except Exception as exc:
+            raise ConsolidationError(
+                f"modernize pass failed on consolidated output: {exc}"
+            ) from exc
     validate_syntax(mod_text, filename)
     diff_text = ""
     target = output / filename
