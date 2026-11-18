@@ -44,14 +44,10 @@ def _format_with_black(text: str) -> str:
 def _format_with_ruff(text: str) -> str:
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, encoding="utf-8"
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
             tmp.write(text)
             tmp_path = tmp.name
-        proc = subprocess.run(
-            ["ruff", "format", tmp_path], capture_output=True, timeout=30
-        )
+        proc = subprocess.run(["ruff", "format", tmp_path], capture_output=True, timeout=30)
         if proc.returncode != 0:
             stderr = proc.stderr.decode("utf-8", "replace").strip()
             logger.warning(
@@ -88,9 +84,7 @@ def render_consolidated(
     do_format: bool = False,
     formatter: str = "black",
 ) -> str:
-    parts = [
-        f'"""Consolidated from ``{source_name}`` by pyrefactor (generated file)."""'
-    ]
+    parts = [f'"""Consolidated from ``{source_name}`` by pyrefactor (generated file)."""']
     head = []
     if plan.future_names:
         head.append(future_section(plan.future_names))
@@ -113,9 +107,7 @@ def render_consolidated(
         first_of_section = blk.section not in seen_sections
         if prev is None or blk.section != prev.section:
             if first_of_section:
-                piece += (
-                    f"{_RULE}\n# {_TITLES.get(blk.section, blk.section)}\n{_RULE}\n\n\n"
-                )
+                piece += f"{_RULE}\n# {_TITLES.get(blk.section, blk.section)}\n{_RULE}\n\n\n"
             sep = "\n\n\n" if prev is not None else ""
         else:
             sep = _sep(prev.kind, blk.kind, prev.text, blk.text)

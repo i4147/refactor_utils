@@ -32,9 +32,7 @@ class RenderedBlock:
 
 @dataclass
 class Plan:
-    exports: dict = field(
-        default_factory=lambda: {"constants": [], "classes": [], "functions": []}
-    )
+    exports: dict = field(default_factory=lambda: {"constants": [], "classes": [], "functions": []})
     renamed: list = field(default_factory=list)
     deduped: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
@@ -70,10 +68,7 @@ def is_valid_identifier(name: str) -> bool:
 
 def make_identifier(text: str, fallback: str = "mod") -> str:
     text = unicodedata.normalize("NFKC", text)
-    out = "".join(
-        ch if (ch == "_" or ch.isalnum()) and f"a{ch}".isidentifier() else "_"
-        for ch in text
-    )
+    out = "".join(ch if (ch == "_" or ch.isalnum()) and f"a{ch}".isidentifier() else "_" for ch in text)
     if not out.strip("_"):
         out = fallback
     if not out[0].isidentifier():
@@ -84,9 +79,7 @@ def make_identifier(text: str, fallback: str = "mod") -> str:
 
 
 def _content_hash(block: Block) -> str:
-    normalised = "\n".join(
-        line.rstrip() for line in block.code().strip().splitlines() if line.strip()
-    )
+    normalised = "\n".join(line.rstrip() for line in block.code().strip().splitlines() if line.strip())
     return hashlib.sha1(normalised.encode("utf-8")).hexdigest()
 
 
@@ -188,9 +181,7 @@ class Resolver:
     def _is_internal(self, spec) -> bool:
         if spec.relative:
             return True
-        return bool(spec.module) and (
-            spec.module in self.known or spec.module.split(".")[0] in self.tops
-        )
+        return bool(spec.module) and (spec.module in self.known or spec.module.split(".")[0] in self.tops)
 
     def _canon(self, b: Block) -> Block:
         return self.canon.get(b.bid, b)
@@ -207,9 +198,7 @@ class Resolver:
             return []
         if mi.declared_all is not None:
             return list(mi.declared_all)
-        names = [
-            n for (m, n) in self.def_block if m == module and not n.startswith("_")
-        ]
+        names = [n for (m, n) in self.def_block if m == module and not n.startswith("_")]
         names += [n for n in self.import_table.get(module, {}) if not n.startswith("_")]
         return names
 
@@ -217,11 +206,7 @@ class Resolver:
         internal = self._is_internal(spec)
         if not spec.is_from:
             if internal:
-                return (
-                    ("mod", spec.module)
-                    if spec.alias
-                    else ("mod", spec.module.split(".")[0])
-                )
+                return ("mod", spec.module) if spec.alias else ("mod", spec.module.split(".")[0])
             return ("ext", ("import", spec.module, spec.alias))
         if internal:
             tgt = self._resolve_symbol(spec.module, spec.name, seen)
@@ -278,9 +263,7 @@ class Resolver:
             for env in self.env.values():
                 emit_keys |= {t[1] for t in env.values() if t[0] == "ext"}
         elif self.imports_mode == "strict":
-            all_ext = {
-                t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"
-            }
+            all_ext = {t[1] for env in self.env.values() for t in env.values() if t[0] == "ext"}
             for k in sorted(all_ext - used, key=repr):
                 self._warn_once(f"Strict imports: unused import {k} would be pruned")
         emit_keys |= self.star_keys
@@ -298,11 +281,7 @@ class Resolver:
         return ("from", spec.module, spec.name, spec.alias)
 
     def _drop_guarded_keys(self, emit_keys: set) -> set:
-        provided = {
-            self._guard_identity(spec)
-            for specs in self.cond_specs.values()
-            for spec in specs
-        }
+        provided = {self._guard_identity(spec) for specs in self.cond_specs.values() for spec in specs}
         if not provided:
             return emit_keys
         kept = set()
@@ -324,9 +303,7 @@ class Resolver:
         for (mm, n), blk in self.def_block.items():
             defs_by_module[mm][n] = blk
         for m, mi in self.modules.items():
-            env: dict = {
-                n: ("def", blk, n) for n, blk in defs_by_module.get(m, {}).items()
-            }
+            env: dict = {n: ("def", blk, n) for n, blk in defs_by_module.get(m, {}).items()}
             specs = [s for s in mi.imports if s.module != "__future__"]
             nested: list = []
             for b in mi.blocks:
@@ -350,9 +327,7 @@ class Resolver:
                             f"{len(self._star_names(spec.module))} names"
                         )
                     else:
-                        self._warn_once(
-                            f"{m}: external star import from {spec.module} — kept as is"
-                        )
+                        self._warn_once(f"{m}: external star import from {spec.module} — kept as is")
                         self.star_keys.add(("star", spec.module))
                     continue
                 tgt = self._spec_target(spec, set())
@@ -378,9 +353,7 @@ class Resolver:
                             "verbatim and will not resolve"
                         )
                     if "ImportError" in g.text or "try:" in g.text:
-                        self._warn_once(
-                            f"{m}: conditional/optional import guard kept verbatim (may have side effects)"
-                        )
+                        self._warn_once(f"{m}: conditional/optional import guard kept verbatim (may have side effects)")
             self.env[m] = env
 
     def _analyse(self) -> None:
@@ -407,9 +380,7 @@ class Resolver:
                         if ref.eager:
                             eager.add(tgt[1])
                 elif tgt[0] == "ext":
-                    if ref.kind == "name" and ref.name in self.nested_locals.get(
-                        b.module, ()
-                    ):
+                    if ref.kind == "name" and ref.name in self.nested_locals.get(b.module, ()):
                         continue
                     ext_keys.add(tgt[1])
                     ext_refs.add((label, tgt[1]))
@@ -458,15 +429,10 @@ class Resolver:
         taken: set = set(ext_locals) | guard_names
         main_override = self.main_name
         for name in sorted(group):
-            blocks = sorted(
-                group[name], key=lambda x: (x.module.count("."), x.module, x.order)
-            )
+            blocks = sorted(group[name], key=lambda x: (x.module.count("."), x.module, x.order))
             is_main_override = name == "main" and main_override is not None
             for i, b in enumerate(blocks):
-                clash = (
-                    bool(ext_loc_modules.get(name, set()) - {b.module})
-                    or name in guard_names
-                )
+                clash = bool(ext_loc_modules.get(name, set()) - {b.module}) or name in guard_names
                 if is_main_override:
                     if i == 0 and not clash and main_override not in taken:
                         cand = main_override
@@ -529,18 +495,14 @@ class Resolver:
                 if ident in aliased:
                     self.ext_final[k] = aliased[ident]
                     continue
-                base = make_identifier(
-                    _sanitize(k[1]) + (f"_{k[2]}" if k[0] == "from" else "")
-                )
+                base = make_identifier(_sanitize(k[1]) + (f"_{k[2]}" if k[0] == "from" else ""))
                 cand, n = base, 2
                 while cand in taken:
                     cand, n = f"{base}_{n}", n + 1
                 taken.add(cand)
                 aliased[ident] = cand
                 self.ext_final[k] = cand
-                logger.info(
-                    "Import conflict on '{}': aliasing {} as '{}'", loc, k[1:], cand
-                )
+                logger.info("Import conflict on '{}': aliasing {} as '{}'", loc, k[1:], cand)
 
     def _target_name(self, tgt, local: str | None) -> str | None:
         if tgt is None:
@@ -600,24 +562,15 @@ class Resolver:
         keyfn = lambda b: (self.mod_idx[b.module], b.order)
         body = [b for b in kept if b.kind != MAIN]
         mains = sorted((b for b in kept if b.kind == MAIN), key=keyfn)
-        deps = {
-            b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid}
-            for b in body
-        }
+        deps = {b.bid: {self._canon(d).bid for d in self.eager[b.bid]} - {b.bid} for b in body}
         dependents: dict = defaultdict(set)
         for bid, ds in deps.items():
             for d in ds:
                 dependents[d].add(bid)
-        tail = [
-            b
-            for b in body
-            if b.kind == FUNC and b.primary == "main" and not dependents[b.bid]
-        ]
+        tail = [b for b in body if b.kind == FUNC and b.primary == "main" and not dependents[b.bid]]
         tail_ids = {b.bid for b in tail}
         head = [b for b in body if b.bid not in tail_ids]
-        ordered = topo_order(
-            head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b))
-        )
+        ordered = topo_order(head, deps, lambda b: _RANK[b.kind], lambda b: (_RANK[b.kind], *keyfn(b)))
         tail_ordered = topo_order(tail, deps, lambda b: 0, keyfn)
         rendered: list[RenderedBlock] = []
         for b in ordered:
@@ -633,11 +586,7 @@ class Resolver:
             )
         for b in tail_ordered:
             origin = f"{b.orig_path}:{b.start_line}-{b.end_line}" if b.orig_path else ""
-            rendered.append(
-                RenderedBlock(
-                    "entry", b.kind, texts[b.bid], origin=origin, module=b.module
-                )
-            )
+            rendered.append(RenderedBlock("entry", b.kind, texts[b.bid], origin=origin, module=b.module))
         merged_guard = self._merge_mains(mains, texts)
         if merged_guard is not None:
             modules = ", ".join(b.module for b in mains)
@@ -651,22 +600,14 @@ class Resolver:
                 )
             )
         if self.generate_guard and not mains:
-            mains_funcs = [
-                b
-                for b in kept
-                if b.kind == FUNC and b.primary in ("main", self.main_name or "main")
-            ]
+            mains_funcs = [b for b in kept if b.kind == FUNC and b.primary in ("main", self.main_name or "main")]
             if mains_funcs:
                 guard_text = (
                     'if __name__ == "__main__":\n    main()'
                     if not self.main_name
                     else f'if __name__ == "__main__":\n    {self.main_name}()'
                 )
-                rendered.append(
-                    RenderedBlock(
-                        "entry", MAIN, guard_text, origin="generated", module="__main__"
-                    )
-                )
+                rendered.append(RenderedBlock("entry", MAIN, guard_text, origin="generated", module="__main__"))
                 logger.info("Auto-generated __main__ guard")
         if len(mains) > 1:
             logger.info(
@@ -699,9 +640,7 @@ class Resolver:
         return plan
 
     def _module_all_names(self) -> list[str]:
-        candidates = [
-            (m, mi) for m, mi in self.modules.items() if mi.declared_all is not None
-        ]
+        candidates = [(m, mi) for m, mi in self.modules.items() if mi.declared_all is not None]
         if not candidates:
             return []
         candidates.sort(key=lambda item: item[0].count("."))

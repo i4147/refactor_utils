@@ -26,8 +26,7 @@ def parse_merged_file(text: str) -> list[tuple[str, str]]:
     matches = list(HEADER_RE.finditer(text))
     if not matches:
         raise ValueError(
-            "no '# File: <path>' headers found; use a directory/package "
-            "source for loose .py files instead"
+            "no '# File: <path>' headers found; use a directory/package source for loose .py files instead"
         )
     out: list[tuple[str, str]] = []
     for i, m in enumerate(matches):
@@ -42,9 +41,7 @@ def parse_merged_file(text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _derive_module_layout(
-    pairs: list[tuple[str, str]], stem: str
-) -> tuple[str, list[tuple[Path, str]]]:
+def _derive_module_layout(pairs: list[tuple[str, str]], stem: str) -> tuple[str, list[tuple[Path, str]]]:
     """Pick a top-level package name and per-entry relative paths.
 
     Two header styles are supported:

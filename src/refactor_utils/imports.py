@@ -43,10 +43,7 @@ def _wrap(module: str, items: list[str]) -> str:
 def _dedupe_aliases(items: Iterable[str]) -> set[str]:
     plain = {i for i in items if " as " not in i}
     aliased = {i for i in items if " as " in i}
-    return {
-        i if i.split(" as ", 1)[1] != i.split(" as ", 1)[0] else i.split(" as ", 1)[0]
-        for i in aliased
-    } | plain
+    return {i if i.split(" as ", 1)[1] != i.split(" as ", 1)[0] else i.split(" as ", 1)[0] for i in aliased} | plain
 
 
 def future_section(names: Iterable[str]) -> str:

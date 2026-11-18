@@ -38,9 +38,7 @@ class _ShimLogger:
     def __init__(self, inner: logging.Logger) -> None:
         self._inner = inner
 
-    def _log(
-        self, level: int, message: object, args: tuple, exc_info: bool = False
-    ) -> None:
+    def _log(self, level: int, message: object, args: tuple, exc_info: bool = False) -> None:
         self._inner.log(level, _fmt_message(message, args), exc_info=exc_info)
 
     def trace(self, message: object, *args: object) -> None:
@@ -72,9 +70,7 @@ class _ShimLogger:
             if not isinstance(handler, logging.NullHandler):
                 self._inner.removeHandler(handler)
 
-    def add(
-        self, sink, level: str = "DEBUG", rotation=None, enqueue=False, format=None
-    ):
+    def add(self, sink, level: str = "DEBUG", rotation=None, enqueue=False, format=None):
         if isinstance(sink, (str, bytes)) or hasattr(sink, "__fspath__"):
             handler: logging.Handler = logging.FileHandler(sink, encoding="utf-8")
         else:

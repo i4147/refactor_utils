@@ -4,12 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "refactor-utils"
-version = "4.0.0"
+version = "4.0.1"
 description = "Consolidate a Python package into one dependency-ordered file, or pack it into a self-extracting zip bundle."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Z User" }]
 keywords = ["consolidate", "bundle", "merge", "python", "single-file", "zip", "modernize", "six", "pathlib"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,6 +28,9 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 
+[[project.authors]]
+name = "Isaac Onagh"
+email = "hellboynaz@gmail.com"
 [project.optional-dependencies]
 format = ["black>=23.0", "ruff>=0.1.0"]
 progress = ["tqdm>=4.0"]
@@ -38,7 +40,9 @@ dev = ["pytest>=7.0", "black", "ruff"]
 pyrefactor = "refactor_utils.cli:main"
 
 [project.urls]
-Homepage = "https://example.invalid/refactor-utils"
+Homepage = "https://github.com/i4147/refactor-utils"
+Repository = "https://github.com/i4147/refactor-utils"
+Issues = "https://github.com/i4147/refactor-utils/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -54,5 +58,5 @@ keep_docstrings = true
 keep_comments = true
 
 [tool.ruff]
-line-length = 88
-target-version = "py310"
+line-length = 120
+target-version = "py311"

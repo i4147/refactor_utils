@@ -92,9 +92,7 @@ def _parse_all(
 
             return tqdm(iterator, total=total, desc="Parsing")
         except ImportError:
-            logger.info(
-                "Progress bar requested but tqdm not installed — falling back to log"
-            )
+            logger.info("Progress bar requested but tqdm not installed — falling back to log")
             return iterator
 
     def run_pool(pool_cls, todo) -> None:
@@ -119,11 +117,7 @@ def _parse_all(
                 src = futures[fut]
                 try:
                     res = fut.result()
-                    if (
-                        isinstance(res, tuple)
-                        and len(res) == 2
-                        and isinstance(res[1], ModuleInfo)
-                    ):
+                    if isinstance(res, tuple) and len(res) == 2 and isinstance(res[1], ModuleInfo):
                         results[res[0]] = res[1]
                     else:
                         results[src.module] = res
@@ -179,13 +173,9 @@ def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module:
                 line = lines[exc.lineno - 1].strip()
         where = f"line {exc.lineno}" if exc.lineno else "unknown line"
         detail = f": {line!r}" if line else ""
-        raise ConsolidationError(
-            f"generated {filename} is not valid python: {exc.msg} ({where}){detail}"
-        ) from exc
+        raise ConsolidationError(f"generated {filename} is not valid python: {exc.msg} ({where}){detail}") from exc
     except ValueError as exc:
-        raise ConsolidationError(
-            f"generated {filename} is not valid python: {exc}"
-        ) from exc
+        raise ConsolidationError(f"generated {filename} is not valid python: {exc}") from exc
 
 
 def consolidate(
@@ -242,13 +232,9 @@ def consolidate(
         if not modernize and cfg.get("modernize"):
             modernize = str(cfg["modernize"])
     if imports_mode not in ("prune", "keep", "strict"):
-        raise ConsolidationError(
-            f"imports_mode must be one of prune/keep/strict, got {imports_mode!r}"
-        )
+        raise ConsolidationError(f"imports_mode must be one of prune/keep/strict, got {imports_mode!r}")
     if main_name is not None and not is_valid_identifier(main_name):
-        raise ConsolidationError(
-            f"--main-name {main_name!r} is not a valid python identifier"
-        )
+        raise ConsolidationError(f"--main-name {main_name!r} is not a valid python identifier")
     source, output = Path(source), Path(output)
     merged_path: Path | None = Path(merged_file) if merged_file else None
     if merged_path is not None:
@@ -286,9 +272,7 @@ def consolidate(
                 df
                 for df in data_files
                 if any(
-                    fnmatch.fnmatch(df.relative, pat)
-                    or fnmatch.fnmatch(Path(df.path).name, pat)
-                    for pat in data_glob
+                    fnmatch.fnmatch(df.relative, pat) or fnmatch.fnmatch(Path(df.path).name, pat) for pat in data_glob
                 )
             ]
     if not files:
@@ -348,9 +332,7 @@ def consolidate(
         logger.info("Renamed {}:{} -> {}", mod, orig, final)
     for mod, name in plan.deduped:
         logger.info("Deduped {} from {}", name, mod)
-    mod_text = render_consolidated(
-        plan, source_name, do_format=do_format, formatter=formatter
-    )
+    mod_text = render_consolidated(plan, source_name, do_format=do_format, formatter=formatter)
     exports = sum(len(v) for v in plan.exports.values())
     if modernize:
         # Apply modernization passes (six -> py3, os.path -> pathlib) to the
@@ -362,9 +344,7 @@ def consolidate(
             if report.changed:
                 mod_text = tree.code
         except Exception as exc:
-            raise ConsolidationError(
-                f"modernize pass failed on consolidated output: {exc}"
-            ) from exc
+            raise ConsolidationError(f"modernize pass failed on consolidated output: {exc}") from exc
     validate_syntax(mod_text, filename)
     diff_text = ""
     target = output / filename
@@ -389,9 +369,7 @@ def consolidate(
             sys.stdout.write(diff_text)
         if check:
             if diff_text:
-                raise ConsolidationError(
-                    "check failed: output would change (diff not empty)"
-                )
+                raise ConsolidationError("check failed: output would change (diff not empty)")
             logger.success("Check passed: output up to date")
             return ConsolidationResult(
                 output,
@@ -426,9 +404,7 @@ def consolidate(
             logger.info("Would embed {} data file(s)", len(resources))
         if copy_data:
             for df in data_files:
-                logger.info(
-                    "Would copy data file {} -> {}/{}", df.path, output, df.relative
-                )
+                logger.info("Would copy data file {} -> {}/{}", df.path, output, df.relative)
         return ConsolidationResult(
             output,
             [],

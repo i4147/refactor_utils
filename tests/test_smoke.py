@@ -155,9 +155,7 @@ def test_bundle_mode_runs(demo_pkg: Path, tmp_path: Path):
     assert text.startswith("#!")
     assert "_BUNDLE" in text
     # actually run the bundle
-    run = subprocess.run(
-        [sys.executable, str(out)], capture_output=True, text=True, check=False
-    )
+    run = subprocess.run([sys.executable, str(out)], capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr
     assert "hello world" in run.stdout
 

@@ -20,9 +20,7 @@ from .models import (
     Ref,
 )
 
-_MAIN_RE = re.compile(
-    r"""^(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)$"""
-)
+_MAIN_RE = re.compile(r"""^(?:__name__\s*==\s*(['"])__main__\1|(['"])__main__\2\s*==\s*__name__)$""")
 _TC_NAMES = {
     "TYPE_CHECKING",
     "typing.TYPE_CHECKING",
@@ -86,9 +84,7 @@ def _resolve_relative(current: str, is_pkg: bool, level: int, rest: str) -> str:
     return ".".join(base + ([rest] if rest else []))
 
 
-def parse_import(
-    stmt: cst.CSTNode, module: str, is_pkg: bool, type_checking: bool = False
-) -> list[ImportSpec]:
+def parse_import(stmt: cst.CSTNode, module: str, is_pkg: bool, type_checking: bool = False) -> list[ImportSpec]:
     if isinstance(stmt, cst.Import):
         specs = []
         for alias in stmt.names:
@@ -132,9 +128,7 @@ def _is_bare_string(value) -> bool:
     if isinstance(value, cst.SimpleString):
         return True
     if isinstance(value, cst.FormattedString):
-        return not any(
-            isinstance(p, cst.FormattedStringExpression) for p in value.parts
-        )
+        return not any(isinstance(p, cst.FormattedStringExpression) for p in value.parts)
     if isinstance(value, cst.ConcatenatedString):
         return _is_bare_string(value.left) and _is_bare_string(value.right)
     return False
@@ -264,9 +258,7 @@ def _collect_all_stmt(small, info: ModuleInfo) -> bool:
     if isinstance(small, cst.Assign) and len(small.targets) == 1:
         target = small.targets[0].target
         if isinstance(target, cst.Name) and target.value == "__all__":
-            info.declared_all = (info.declared_all or []) + _string_literals(
-                small.value
-            )
+            info.declared_all = (info.declared_all or []) + _string_literals(small.value)
             return True
         return False
     if isinstance(small, cst.Expr) and isinstance(small.value, cst.Call):
@@ -313,11 +305,7 @@ class _DocstringStripper(cst.CSTTransformer):
                 return updated_node.with_changes(body=body.with_changes(body=stmts))
         elif isinstance(body, cst.SimpleStatementSuite):
             smalls = body.body
-            if (
-                smalls
-                and isinstance(smalls[0], cst.Expr)
-                and _is_bare_string(smalls[0].value)
-            ):
+            if smalls and isinstance(smalls[0], cst.Expr) and _is_bare_string(smalls[0].value):
                 smalls = smalls[1:] or [cst.Pass()]
                 return updated_node.with_changes(body=body.with_changes(body=smalls))
         return updated_node
@@ -337,9 +325,7 @@ class _CommentStripper(cst.CSTTransformer):
 
     def leave_TrailingWhitespace(self, original_node, updated_node):
         if updated_node.comment is not None:
-            return updated_node.with_changes(
-                comment=None, whitespace=cst.SimpleWhitespace("")
-            )
+            return updated_node.with_changes(comment=None, whitespace=cst.SimpleWhitespace(""))
         return updated_node
 
 
@@ -524,9 +510,7 @@ class RefWalker(cst.CSTTransformer):
             return updated_node
         if name == "__file__" and self.collect and "file" not in self.warned:
             self.warned.add("file")
-            self.info.warnings.append(
-                f"{self.module}: uses __file__, which now points at the consolidated file"
-            )
+            self.info.warnings.append(f"{self.module}: uses __file__, which now points at the consolidated file")
         if self.collect:
             self.refs.append(Ref(name, "name", eager=not ctx.lazy))
             return updated_node
@@ -568,11 +552,7 @@ class RefWalker(cst.CSTTransformer):
         specs = parse_import(original_node, self.module, self.is_pkg)
         if not any(self.resolver._is_internal(s) for s in specs):
             return updated_node
-        kept = [
-            alias
-            for alias, spec in zip(updated_node.names, specs)
-            if not self.resolver._is_internal(spec)
-        ]
+        kept = [alias for alias, spec in zip(updated_node.names, specs) if not self.resolver._is_internal(spec)]
         return cst.Import(names=kept) if kept else cst.Pass()
 
     def leave_ImportFrom(self, original_node, updated_node):
@@ -593,9 +573,7 @@ def _detect_dynamic_patterns(text: str, info: ModuleInfo) -> None:
                     f"{info.module}: uses {name} for dynamic imports — consolidation may miss dependencies"
                 )
             elif name in ("globals", "locals", "eval", "exec", "getattr"):
-                info.warnings.append(
-                    f"{info.module}: uses {name}() — name resolution may be incomplete"
-                )
+                info.warnings.append(f"{info.module}: uses {name}() — name resolution may be incomplete")
             elif name in ("__getattr__", "__dir__", "monkeypatch"):
                 info.warnings.append(
                     f"{info.module}: defines/uses {name} — module-level attribute access may change semantics"
@@ -630,11 +608,7 @@ def _add_compound(info, by_name, warned, stmt, start, end) -> None:
     code = render_stmt(stmt)
     imports, has_def = _scan_imports_defs(stmt)
     if imports and not has_def:
-        specs = [
-            spec
-            for imp in imports
-            for spec in parse_import(imp, info.module, info.is_pkg)
-        ]
+        specs = [spec for imp in imports for spec in parse_import(imp, info.module, info.is_pkg)]
         info.guards.append(GuardBlock(code, specs, _bound_names(stmt), True))
         return
     info.warnings.append(
@@ -692,11 +666,7 @@ def _add_type_checking(info, by_name, warned, node, positions) -> None:
         if smalls is not None:
             for small in smalls:
                 if isinstance(small, (cst.Import, cst.ImportFrom)):
-                    info.imports.extend(
-                        parse_import(
-                            small, info.module, info.is_pkg, type_checking=True
-                        )
-                    )
+                    info.imports.extend(parse_import(small, info.module, info.is_pkg, type_checking=True))
                 elif isinstance(small, cst.Pass):
                     continue
                 elif _collect_all_stmt(small, info):
@@ -720,11 +690,7 @@ def _add_type_checking(info, by_name, warned, node, positions) -> None:
         imports, has_def = _scan_imports_defs(s)
         if imports and not has_def:
             specs = [
-                spec
-                for imp in imports
-                for spec in parse_import(
-                    imp, info.module, info.is_pkg, type_checking=True
-                )
+                spec for imp in imports for spec in parse_import(imp, info.module, info.is_pkg, type_checking=True)
             ]
             info.guards.append(GuardBlock(code, specs, _bound_names(s), True))
             continue
@@ -772,9 +738,7 @@ def _extract(info: ModuleInfo, tree: cst.Module, positions: dict) -> None:
                     )
         elif isinstance(stmt, (cst.FunctionDef, cst.ClassDef)):
             kind = CLASS if isinstance(stmt, cst.ClassDef) else FUNC
-            _make_block(
-                info, by_name, warned, kind, [stmt.name.value], stmt, start, end
-            )
+            _make_block(info, by_name, warned, kind, [stmt.name.value], stmt, start, end)
         elif isinstance(stmt, cst.If):
             cond = render_expr(stmt.test)
             if _MAIN_RE.match(cond):
@@ -783,14 +747,8 @@ def _extract(info: ModuleInfo, tree: cst.Module, positions: dict) -> None:
             if cond in _TC_NAMES:
                 _add_type_checking(info, by_name, warned, stmt, positions)
                 continue
-            if (
-                "sys.platform" in cond
-                or "sys.version" in cond
-                or "TYPE_CHECKING" in cond
-            ):
-                info.warnings.append(
-                    f"{info.module}: conditional import guarded by '{cond}' kept verbatim"
-                )
+            if "sys.platform" in cond or "sys.version" in cond or "TYPE_CHECKING" in cond:
+                info.warnings.append(f"{info.module}: conditional import guarded by '{cond}' kept verbatim")
             _add_compound(info, by_name, warned, stmt, start, end)
         elif isinstance(stmt, _COMPOUND):
             _add_compound(info, by_name, warned, stmt, start, end)
@@ -820,11 +778,7 @@ def _detect_runtime_semantics(info: ModuleInfo, text: str) -> None:
                         f"{info.module}: uses {ref.name} — semantics change in consolidated file "
                         "(it now points at the consolidated module)"
                     )
-    if (
-        "importlib.resources" in text
-        or "pkg_resources" in text
-        or ("open(" in text and "__file__" in text)
-    ):
+    if "importlib.resources" in text or "pkg_resources" in text or ("open(" in text and "__file__" in text):
         info.warnings.append(
             f"{info.module}: does resource loading relative to __file__ — verify output "
             "handles bundled resources (see --embed-data)"
@@ -847,16 +801,12 @@ def parse_module_file(
     if src.startswith(b"\xef\xbb\xbf"):
         src = src[3:]
     if b"\r\n" in src:
-        info.warnings.append(
-            f"{path_str}: contains CRLF line endings — normalized to LF in output"
-        )
+        info.warnings.append(f"{path_str}: contains CRLF line endings — normalized to LF in output")
         src = src.replace(b"\r\n", b"\n")
     try:
         src.decode("utf-8")
     except UnicodeDecodeError:
-        info.warnings.append(
-            f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters"
-        )
+        info.warnings.append(f"{path_str}: non-UTF8 encoding detected — decoded with replacement characters")
     text = src.decode("utf-8", "replace")
     try:
         tree = cst.parse_module(text)

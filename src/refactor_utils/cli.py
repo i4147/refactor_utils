@@ -42,9 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--name",
         default=None,
         metavar="NAME",
-        help=(
-            "name of the generated file\n(default: the source name, e.g. output/<source>.py)"
-        ),
+        help=("name of the generated file\n(default: the source name, e.g. output/<source>.py)"),
     )
     p.add_argument(
         "-j",
@@ -59,9 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="process",
         help="executor type for parallel parsing (default: process)",
     )
-    p.add_argument(
-        "--progress", action="store_true", help="show progress bar during parsing"
-    )
+    p.add_argument("--progress", action="store_true", help="show progress bar during parsing")
     # Discovery / filtering
     p.add_argument(
         "-x",
@@ -69,9 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="GLOB",
-        help=(
-            "extra path glob to skip (repeatable)\nprecedence: default excludes < --include < --exclude"
-        ),
+        help=("extra path glob to skip (repeatable)\nprecedence: default excludes < --include < --exclude"),
     )
     p.add_argument(
         "--include",
@@ -132,9 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--imports",
         choices=["prune", "keep", "strict"],
         default="prune",
-        help=(
-            "import handling: prune (default, drop unused), keep (keep all),\nstrict (prune and warn on unused)"
-        ),
+        help=("import handling: prune (default, drop unused), keep (keep all),\nstrict (prune and warn on unused)"),
     )
     p.add_argument(
         "--keep-docstrings",
@@ -242,10 +234,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="DIR",
-        help=(
-            "extra directories to search for local packages (repeatable;\n"
-            "':'-separated lists allowed)"
-        ),
+        help=("extra directories to search for local packages (repeatable;\n':'-separated lists allowed)"),
     )
     bundle.add_argument(
         "--exclude-module",
@@ -253,8 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="PAT",
         help=(
-            "exclude modules/packages (fnmatch on dotted names;\n"
-            "a bare name excludes its whole subtree; repeatable)"
+            "exclude modules/packages (fnmatch on dotted names;\na bare name excludes its whole subtree; repeatable)"
         ),
     )
     bundle.add_argument(
@@ -447,9 +435,7 @@ def main(argv=None) -> int:
 
 def _run_bundle(args) -> int:
     if args.source is None:
-        logger.error(
-            "--bundle requires a SOURCE (entry script, package dir, or module name)"
-        )
+        logger.error("--bundle requires a SOURCE (entry script, package dir, or module name)")
         return 2
     output: str | Path | None
     if args.stdout:

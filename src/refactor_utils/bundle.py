@@ -68,9 +68,7 @@ _COMPRESSIONS: dict[str, int] = {
 
 _BINARY_SUFFIXES: frozenset[str] = frozenset({".so", ".pyd", ".dylib"})
 
-_IGNORED_TOPS: frozenset[str] = frozenset(
-    {"__main__", "__builtins__", "builtins", "__future__"}
-)
+_IGNORED_TOPS: frozenset[str] = frozenset({"__main__", "__builtins__", "builtins", "__future__"})
 
 _STRICT_WARNING_KINDS: frozenset[str] = frozenset({"unresolved", "broken"})
 
@@ -134,9 +132,7 @@ class ConsolidationPlan:
         else:
             entry_desc = f"{self.entry} -> bundle:/{self.entry_archive}"
         lines = [f"entry     : {entry_desc}"]
-        lines.append(
-            "search    : " + (", ".join(str(p) for p in self.search_paths) or "-")
-        )
+        lines.append("search    : " + (", ".join(str(p) for p in self.search_paths) or "-"))
         modules = sorted(self.modules)
         head = ", ".join(modules[:20])
         if len(modules) > 20:
@@ -158,10 +154,7 @@ class ConsolidationPlan:
 
 
 def _is_excluded(name: str, patterns: Sequence[str]) -> bool:
-    return any(
-        fnmatch.fnmatchcase(name, pattern) or name.startswith(pattern + ".")
-        for pattern in patterns
-    )
+    return any(fnmatch.fnmatchcase(name, pattern) or name.startswith(pattern + ".") for pattern in patterns)
 
 
 def _validate_dotted(name: str, what: str) -> str:
@@ -219,9 +212,7 @@ def _walk_tree(
     prune_dir: Callable[[tuple[str, ...]], bool] | None = None,
     prune_file: Callable[[tuple[str, ...]], bool] | None = None,
 ) -> Iterator[tuple[Path, tuple[str, ...]]]:
-    def recurse(
-        directory: Path, seen: set[str]
-    ) -> Iterator[tuple[Path, tuple[str, ...]]]:
+    def recurse(directory: Path, seen: set[str]) -> Iterator[tuple[Path, tuple[str, ...]]]:
         try:
             with os.scandir(directory) as iterator:
                 entries = sorted(iterator, key=lambda item: item.name)
@@ -391,9 +382,7 @@ def _scan_module(module_name: str, path: Path, is_package: bool) -> _ScanResult:
         encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
         tree = ast.parse(raw.decode(encoding), filename=str(path))
     except (OSError, SyntaxError, UnicodeDecodeError, LookupError) as exc:
-        return _ScanResult(
-            set(), [PlanWarning("parse", f"could not parse {path}: {exc}")]
-        )
+        return _ScanResult(set(), [PlanWarning("parse", f"could not parse {path}: {exc}")])
     scanner = _ImportScanner(module_name, is_package, str(path))
     scanner.visit(tree)
     return _ScanResult(scanner.imports, scanner.notes)
@@ -473,9 +462,7 @@ def _site_dirs(extra: Sequence[Path]) -> list[Path]:
     return dirs
 
 
-def _resolve_thirdparty(
-    requests: Sequence[str | Path], site_paths: Sequence[Path]
-) -> dict[str, _ThirdPartyPackage]:
+def _resolve_thirdparty(requests: Sequence[str | Path], site_paths: Sequence[Path]) -> dict[str, _ThirdPartyPackage]:
     resolved: dict[str, _ThirdPartyPackage] = {}
     if not requests:
         return resolved
@@ -485,9 +472,7 @@ def _resolve_thirdparty(
         if request_path.is_dir() or request_path.is_file():
             name = request_path.stem if request_path.is_file() else request_path.name
             _validate_dotted(name, f"package path {request_path}")
-            resolved[name] = _ThirdPartyPackage(
-                name, request_path, request_path.is_dir()
-            )
+            resolved[name] = _ThirdPartyPackage(name, request_path, request_path.is_dir())
             continue
         name = _validate_dotted(str(request), "--include-package entry")
         if name in resolved:
@@ -506,9 +491,7 @@ def _resolve_thirdparty(
                 break
         if found is None:
             searched = ", ".join(str(d) for d in dirs) or "<no site directories>"
-            raise ConsolidationError(
-                f"--include-package {name!r}: package not found in: {searched}"
-            )
+            raise ConsolidationError(f"--include-package {name!r}: package not found in: {searched}")
         resolved[name] = found
     return resolved
 
@@ -529,13 +512,9 @@ def _find_package_dir(directory: Path) -> Path:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        raise ConsolidationError(
-            f"{directory} is not a package and contains no package"
-        )
+        raise ConsolidationError(f"{directory} is not a package and contains no package")
     names = ", ".join(child.name for child in candidates)
-    raise ConsolidationError(
-        f"{directory} contains multiple packages ({names}); pass one explicitly"
-    )
+    raise ConsolidationError(f"{directory} contains multiple packages ({names}); pass one explicitly")
 
 
 def _has_main_function(init_path: Path) -> bool:
@@ -546,10 +525,7 @@ def _has_main_function(init_path: Path) -> bool:
     except (OSError, SyntaxError, UnicodeDecodeError, LookupError):
         return False
     for node in tree.body:
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "main"
-        ):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main":
             return True
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
@@ -562,9 +538,7 @@ def _has_main_function(init_path: Path) -> bool:
     return False
 
 
-def _synthesize_main(
-    pkg_name: str, pkg_dir: Path, override: str | None
-) -> tuple[str, list[str]]:
+def _synthesize_main(pkg_name: str, pkg_dir: Path, override: str | None) -> tuple[str, list[str]]:
     if override is not None:
         parts = override.split(".")
         module_file = pkg_dir / "/".join(parts) + ".py"
@@ -575,19 +549,13 @@ def _synthesize_main(
                 f"(tried {module_file} and {package_init})"
             )
         target = f"{pkg_name}.{override}"
-        source = (
-            "import runpy as _runpy\n"
-            f"_runpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
-        )
+        source = f"import runpy as _runpy\n_runpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
         return source, [target]
 
     for candidate in _ENTRY_CANDIDATES:
         if (pkg_dir / f"{candidate}.py").is_file():
             target = f"{pkg_name}.{candidate}"
-            source = (
-                "import runpy as _runpy\n"
-                f"_runpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
-            )
+            source = f"import runpy as _runpy\n_runpy.run_module({target!r}, run_name='__main__', alter_sys=True)\n"
             return source, [target]
 
     init = pkg_dir / "__init__.py"
@@ -678,8 +646,7 @@ def analyze_bundle(
             if existing.source != file:
                 warn(
                     "conflict",
-                    f"module {name!r}: keeping {existing.source}, ignoring "
-                    f"duplicate at {file}",
+                    f"module {name!r}: keeping {existing.source}, ignoring duplicate at {file}",
                 )
             return
         modules[name] = BundledModule(name, file, is_package)
@@ -781,8 +748,7 @@ def analyze_bundle(
         elif top in modules:
             warn(
                 "broken",
-                f"import chain {name!r} (imported by {importer}): {name!r} "
-                f"not found inside bundled package {top!r}",
+                f"import chain {name!r} (imported by {importer}): {name!r} not found inside bundled package {top!r}",
             )
 
     def process_scan(result: _ScanResult, importer: str) -> None:
@@ -820,8 +786,7 @@ def analyze_bundle(
             located = _locate(entry_module, search_paths)
             if located is None:
                 raise ConsolidationError(
-                    f"module {entry_module!r} not found in: "
-                    f"{', '.join(str(p) for p in search_paths)}"
+                    f"module {entry_module!r} not found in: {', '.join(str(p) for p in search_paths)}"
                 )
             embed_located(located, entry_module)
             if located.is_package:
@@ -856,8 +821,7 @@ def analyze_bundle(
         if any(m == top_name or m.startswith(top_name + ".") for m in modules):
             warn(
                 "note",
-                f"--include-package {top_name}: a local copy was already bundled; "
-                "the third-party entry was ignored",
+                f"--include-package {top_name}: a local copy was already bundled; the third-party entry was ignored",
             )
             continue
         embed_thirdparty(top_name, package)
@@ -878,9 +842,7 @@ def analyze_bundle(
         failures = [w for w in warnings if w.kind in _STRICT_WARNING_KINDS]
         if failures:
             detail = "\n  ".join(str(w) for w in failures)
-            raise ConsolidationError(
-                f"strict mode: {len(failures)} unresolved import(s):\n  {detail}"
-            )
+            raise ConsolidationError(f"strict mode: {len(failures)} unresolved import(s):\n  {detail}")
 
     return ConsolidationPlan(
         entry=entry_file or entry_pkg_dir or Path(str(entry)).resolve(),
@@ -926,8 +888,7 @@ def _parse_data_spec(
         return [(path, path.name)], pattern
     warn(
         "note",
-        f"--include-data {spec!r}: {prefix!r} is neither a bundled package "
-        "nor an existing directory",
+        f"--include-data {spec!r}: {prefix!r} is neither a bundled package nor an existing directory",
     )
     return None
 
@@ -956,8 +917,7 @@ def _collect_data(
         if archive in module_archives:
             warn(
                 "conflict",
-                f"data file {source} collides with bundled module {archive}; "
-                "the module wins",
+                f"data file {source} collides with bundled module {archive}; the module wins",
             )
             return
         existing = out.get(archive)
@@ -965,8 +925,7 @@ def _collect_data(
             if existing != source:
                 warn(
                     "conflict",
-                    f"bundle path {archive!r} already provided by {existing}; "
-                    f"ignoring {source}",
+                    f"bundle path {archive!r} already provided by {existing}; ignoring {source}",
                 )
             return
         out[archive] = source
@@ -974,11 +933,7 @@ def _collect_data(
     if "*" in package_data:
         targets = sorted(package_dirs.items())
     else:
-        targets = sorted(
-            (name, package_dirs[name])
-            for name in set(package_data)
-            if name in package_dirs
-        )
+        targets = sorted((name, package_dirs[name]) for name in set(package_data) if name in package_dirs)
         for name in package_data:
             if name != "*" and name not in package_dirs:
                 warn(
@@ -1159,8 +1114,7 @@ def _archive_members(plan: ConsolidationPlan) -> dict[str, Path | bytes]:
         existing = members.get(archive)
         if existing is not None and existing != module.source:
             raise ConsolidationError(
-                f"internal error: archive path {archive!r} maps to both "
-                f"{existing} and {module.source}"
+                f"internal error: archive path {archive!r} maps to both {existing} and {module.source}"
             )
         members[archive] = module.source
     for archive, source in sorted(plan.synthetic_files.items()):
@@ -1172,9 +1126,7 @@ def _archive_members(plan: ConsolidationPlan) -> dict[str, Path | bytes]:
     return members
 
 
-def _render_header(
-    plan: ConsolidationPlan, *, compression: str, deterministic: bool
-) -> str:
+def _render_header(plan: ConsolidationPlan, *, compression: str, deterministic: bool) -> str:
     top_names = sorted({module.name.split(".")[0] for module in plan.modules.values()})
     lines = [
         "# " + "=" * 74,
@@ -1212,9 +1164,7 @@ def render_bundle(
 ) -> str:
     """Render *plan* into a runnable self-extracting python script."""
     if compression not in _COMPRESSIONS:
-        raise ConsolidationError(
-            f"unknown compression {compression!r}; expected one of {sorted(_COMPRESSIONS)}"
-        )
+        raise ConsolidationError(f"unknown compression {compression!r}; expected one of {sorted(_COMPRESSIONS)}")
     interpreter = python or sys.executable or "python3"
     members = _archive_members(plan)
     timestamp = _zip_timestamp(deterministic)
@@ -1235,9 +1185,7 @@ def render_bundle(
             info.compress_type = compress_type
             archive.writestr(info, data)
     payload = base64.b64encode(buffer.getvalue()).decode("ascii")
-    chunks = "\n".join(
-        f'    "{payload[index : index + 76]}"' for index in range(0, len(payload), 76)
-    )
+    chunks = "\n".join(f'    "{payload[index : index + 76]}"' for index in range(0, len(payload), 76))
     if not chunks:
         chunks = '    ""'
 

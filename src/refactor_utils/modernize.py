@@ -118,11 +118,7 @@ def _module_bare_path(tree: cst.Module) -> bool:
     """True if the module imports ``path`` from ``os`` (``from os import path``)."""
     for stmt in tree.body:
         small = stmt.body[0] if isinstance(stmt, cst.SimpleStatementLine) else stmt
-        if (
-            isinstance(small, cst.ImportFrom)
-            and _dotted(small.module) == "os"
-            and not small.relative
-        ):
+        if isinstance(small, cst.ImportFrom) and _dotted(small.module) == "os" and not small.relative:
             for alias in small.names:
                 if isinstance(alias, cst.ImportAlias) and alias.name.value == "path":
                     return True
@@ -130,9 +126,7 @@ def _module_bare_path(tree: cst.Module) -> bool:
 
 
 class _SixImportRewriter(cst.CSTTransformer):
-    def leave_ImportFrom(
-        self, original_node: cst.ImportFrom, updated_node: cst.ImportFrom
-    ) -> cst.BaseSmallStatement:
+    def leave_ImportFrom(self, original_node: cst.ImportFrom, updated_node: cst.ImportFrom) -> cst.BaseSmallStatement:
         module = _dotted(updated_node.module) if updated_node.module else ""
         if module in SIX_MOVES_MAP:
             mapped = SIX_MOVES_MAP[module]
@@ -143,9 +137,7 @@ class _SixImportRewriter(cst.CSTTransformer):
             return cst.RemoveFromParent()
         return updated_node
 
-    def leave_Import(
-        self, original_node: cst.Import, updated_node: cst.Import
-    ) -> cst.BaseSmallStatement:
+    def leave_Import(self, original_node: cst.Import, updated_node: cst.Import) -> cst.BaseSmallStatement:
         kept = [a for a in updated_node.names if a.name.value != "six"]
         if not kept:
             return cst.RemoveFromParent()
@@ -155,13 +147,8 @@ class _SixImportRewriter(cst.CSTTransformer):
 
 
 class _SixTransformer(cst.CSTTransformer):
-    def leave_Attribute(
-        self, original_node: cst.Attribute, updated_node: cst.Attribute
-    ) -> cst.BaseExpression:
-        if (
-            isinstance(updated_node.value, cst.Name)
-            and updated_node.value.value == "six"
-        ):
+    def leave_Attribute(self, original_node: cst.Attribute, updated_node: cst.Attribute) -> cst.BaseExpression:
+        if isinstance(updated_node.value, cst.Name) and updated_node.value.value == "six":
             attr = updated_node.attr.value
             if attr == "PY2":
                 return _name("False")
@@ -171,22 +158,14 @@ class _SixTransformer(cst.CSTTransformer):
                 return _name(SIX_ATTR_MAP[attr])
         return updated_node
 
-    def leave_Call(
-        self, original_node: cst.Call, updated_node: cst.Call
-    ) -> cst.BaseExpression:
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
         func = updated_node.func
-        if not (
-            isinstance(func, cst.Attribute)
-            and isinstance(func.value, cst.Name)
-            and func.value.value == "six"
-        ):
+        if not (isinstance(func, cst.Attribute) and isinstance(func.value, cst.Name) and func.value.value == "six"):
             return updated_node
         method = func.attr.value
         args = list(updated_node.args)
         if method in ("iteritems", "iterkeys", "itervalues") and len(args) == 1:
-            mapped = {"iteritems": "items", "iterkeys": "keys", "itervalues": "values"}[
-                method
-            ]
+            mapped = {"iteritems": "items", "iterkeys": "keys", "itervalues": "values"}[method]
             return _call(_attr(args[0].value, mapped))
         if method == "u" and len(args) == 1:
             return args[0].value
@@ -199,13 +178,9 @@ class _OsPathTransformer(cst.CSTTransformer):
     def __init__(self, bare_path: bool = False) -> None:
         self.bare_path = bare_path
 
-    def leave_Call(
-        self, original_node: cst.Call, updated_node: cst.Call
-    ) -> cst.BaseExpression:
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
         func = updated_node.func
-        if not isinstance(func, cst.Attribute) or not _is_os_path(
-            func.value, self.bare_path
-        ):
+        if not isinstance(func, cst.Attribute) or not _is_os_path(func.value, self.bare_path):
             return updated_node
         method = func.attr.value
         args = list(updated_node.args)
@@ -231,20 +206,14 @@ class _OsPathTransformer(cst.CSTTransformer):
             return _attr(stat_call, "st_size")
         return updated_node
 
-    def leave_Subscript(
-        self, original_node: cst.Subscript, updated_node: cst.Subscript
-    ) -> cst.BaseExpression:
+    def leave_Subscript(self, original_node: cst.Subscript, updated_node: cst.Subscript) -> cst.BaseExpression:
         # os.path.splitext(x)[1] -> Path(x).suffix
         slices = list(updated_node.slice)
         if len(slices) != 1:
             return updated_node
         elem = slices[0]
         index = elem.slice
-        if not (
-            isinstance(index, cst.Index)
-            and isinstance(index.value, cst.Integer)
-            and index.value.value == "1"
-        ):
+        if not (isinstance(index, cst.Index) and isinstance(index.value, cst.Integer) and index.value.value == "1"):
             return updated_node
         call = updated_node.value
         if not (isinstance(call, cst.Call) and len(call.args) == 1):
@@ -264,9 +233,7 @@ class ModernizeReport:
     changed: bool
 
 
-def modernize_tree(
-    tree: cst.Module, passes: str | list[str] | tuple[str, ...]
-) -> tuple[cst.Module, ModernizeReport]:
+def modernize_tree(tree: cst.Module, passes: str | list[str] | tuple[str, ...]) -> tuple[cst.Module, ModernizeReport]:
     """Apply the requested modernization *passes* to *tree* and return the new tree.
 
     Unknown passes raise ``ValueError``.

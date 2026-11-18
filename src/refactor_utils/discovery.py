@@ -117,9 +117,7 @@ def detect_base(root: Path) -> Path:
     if (root / "__init__.py").is_file():
         return root.parent
     src = root / "src"
-    if src.is_dir() and any(
-        p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()
-    ):
+    if src.is_dir() and any(p.is_dir() and (p / "__init__.py").is_file() for p in src.iterdir()):
         return src
     return root
 
@@ -162,9 +160,7 @@ def _is_excluded(
     default_hit = any(fnmatch.fnmatch(name, g) for g in EXCLUDED_FILE_GLOBS)
     if default_hit:
         if include and _matches(rel, posix, name, include):
-            logger.debug(
-                "Re-included {} via --include (overrode default exclude)", path
-            )
+            logger.debug("Re-included {} via --include (overrode default exclude)", path)
             return False
         logger.debug("Skipping {} (default exclude)", path)
         return True
@@ -204,9 +200,7 @@ def _walk(
         if is_symlink and not follow_symlinks:
             try:
                 target = entry.resolve()
-                if target in skip or any(
-                    str(target).startswith(str(s) + os.sep) for s in skip
-                ):
+                if target in skip or any(str(target).startswith(str(s) + os.sep) for s in skip):
                     continue
             except OSError:
                 logger.warning("Broken symlink skipped: {}", entry)
@@ -329,9 +323,7 @@ def discover_data_files(
                 if exclude and _matches(rel, entry.as_posix(), entry.name, exclude):
                     continue
                 if any(fnmatch.fnmatch(entry.name, g) for g in EXCLUDED_FILE_GLOBS):
-                    if not (
-                        include and _matches(rel, entry.as_posix(), entry.name, include)
-                    ):
+                    if not (include and _matches(rel, entry.as_posix(), entry.name, include)):
                         continue
                 if _is_data_file(entry):
                     data_files.append(DataFile(entry, rel))
@@ -342,9 +334,7 @@ def discover_data_files(
     return data_files
 
 
-def read_pyproject_section(
-    config_path: Path | str, section: str = "pyrefactor"
-) -> dict:
+def read_pyproject_section(config_path: Path | str, section: str = "pyrefactor") -> dict:
     try:
         import tomllib
     except ImportError:  # pragma: no cover - py<3.11

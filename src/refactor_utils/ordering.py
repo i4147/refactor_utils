@@ -16,13 +16,8 @@ def topo_order(
     key: Callable[[Block], tuple],
 ) -> list[Block]:
     by_id = {b.bid: b for b in nodes}
-    pending = {
-        b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid}
-        for b in nodes
-    }
-    name_key = {
-        b.bid: (sort_key(b.primary) if b.primary else (1, "", ""), b.bid) for b in nodes
-    }
+    pending = {b.bid: {d for d in deps.get(b.bid, ()) if d in by_id and d != b.bid} for b in nodes}
+    name_key = {b.bid: (sort_key(b.primary) if b.primary else (1, "", ""), b.bid) for b in nodes}
     dependents: dict[int, list[int]] = defaultdict(list)
     for bid, ds in pending.items():
         for d in ds:
@@ -58,9 +53,7 @@ def topo_order(
                     name_key[i],
                 ),
             )
-            blocked = ", ".join(
-                sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand])
-            )
+            blocked = ", ".join(sorted(by_id[d].primary or f"<{by_id[d].kind}>" for d in pending[cand]))
             logger.warning(
                 "Circular import-time dependency: emitting {} ({}) before {}",
                 by_id[cand].primary or f"<{by_id[cand].kind}>",
