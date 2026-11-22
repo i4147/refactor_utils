@@ -1,3 +1,4 @@
+# File: cli.py
 from __future__ import annotations
 
 import argparse
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="executor type for parallel parsing (default: process)",
     )
     p.add_argument("--progress", action="store_true", help="show progress bar during parsing")
+
     # Discovery / filtering
     p.add_argument(
         "-x",
@@ -83,12 +85,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--embed-data",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help=(
             "embed data files into the consolidated file so it is fully\n"
             "self-contained: text files (json, ini, ...) as plain text,\n"
             "binary files (fonts, ...) as base64\n"
-            "(the module then exposes get_resource()/resource_path())"
+            "(the module then exposes get_resource()/resource_path())\n"
+            "(default: on; use --no-embed-data to disable)"
+        ),
+    )
+    p.add_argument(
+        "--max-embed-size",
+        type=int,
+        default=10 * 1024 * 1024,
+        metavar="BYTES",
+        help=(
+            "maximum size in bytes for a single embedded data file\n"
+            "(default: 10485760; larger files are skipped with a warning)"
         ),
     )
     p.add_argument(
@@ -165,6 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="always write, even if the output directory already exists",
     )
+
     # Modernization (ported from consolidate.py)
     p.add_argument(
         "--modernize",
@@ -176,6 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
             "e.g. --modernize six,ospath"
         ),
     )
+
     # Merged-file input (ported from consolidate.py)
     p.add_argument(
         "-f",
@@ -188,6 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
             "section headers (the ru.txt format) instead of a directory"
         ),
     )
+
     # Bundle mode (ported from consolidator.py)
     bundle = p.add_argument_group("bundle mode (--bundle)")
     bundle.add_argument(
@@ -306,6 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="embed the build date in the bundle instead of a fixed timestamp",
     )
+
     # Config / formatting
     p.add_argument(
         "--config",
@@ -352,15 +369,24 @@ def _bundle_default_output(source: str | None, requested: Path) -> Path:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level, args.log_file)
+
     if args.merged_file is None and args.source is None:
         logger.error("provide a SOURCE, or use --merged-file PATH")
         return 2
     if args.bundle and args.merged_file is not None:
         logger.error("--bundle cannot be combined with --merged-file")
         return 2
+    if args.workers is not None and args.workers < 1:
+        logger.error("--workers must be at least 1")
+        return 2
+    if args.max_embed_size < 0:
+        logger.error("--max-embed-size must not be negative")
+        return 2
+
     try:
         if args.bundle:
             return _run_bundle(args)
+
         result = consolidate(
             args.source if args.source is not None else str(args.merged_file),
             args.output,
@@ -384,6 +410,7 @@ def main(argv=None) -> int:
             progress=args.progress,
             copy_data=args.copy_data,
             embed_data=args.embed_data,
+            max_embed_bytes=args.max_embed_size,
             data_glob=tuple(args.data_glob),
             entry_keep_all=args.entry_keep_all,
             main_name=args.main_name,
@@ -397,6 +424,7 @@ def main(argv=None) -> int:
     except Exception:
         logger.exception("Unexpected failure")
         return 1
+
     if result.dry_run:
         logger.info(
             "{}: {} modules, {} skipped, {} exports, {} warnings",
@@ -407,6 +435,7 @@ def main(argv=None) -> int:
             len(result.warnings),
         )
         return 0
+
     if result.files:
         logger.success(
             "{} modules -> {} ({} exported names)",
@@ -420,6 +449,7 @@ def main(argv=None) -> int:
             result.modules,
             result.exports,
         )
+
     if result.copied_data_files:
         logger.info("Copied {} data file(s)", len(result.copied_data_files))
     if result.embedded_data_files:
@@ -437,11 +467,13 @@ def _run_bundle(args) -> int:
     if args.source is None:
         logger.error("--bundle requires a SOURCE (entry script, package dir, or module name)")
         return 2
+
     output: str | Path | None
     if args.stdout:
         output = None
     else:
         output = _bundle_default_output(args.source, args.output)
+
     consolidate_bundle(
         args.source,
         output=output,

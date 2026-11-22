@@ -1,3 +1,4 @@
+# File: core.py
 from __future__ import annotations
 
 import ast
@@ -13,7 +14,7 @@ from concurrent.futures import (
     as_completed,
 )
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import libcst as cst
 
@@ -113,6 +114,7 @@ def _parse_all(
                 }
             else:
                 futures = {pool.submit(_do_one, f): f for f in todo}
+
             for fut in _progress(as_completed(futures), len(futures)):
                 src = futures[fut]
                 try:
@@ -133,12 +135,14 @@ def _parse_all(
             except Exception:
                 logger.exception("Failed to parse {}", f.path)
         return results
+
     pool_cls = ProcessPoolExecutor if executor == "process" else ThreadPoolExecutor
     try:
         run_pool(pool_cls, files)
     except BrokenExecutor:
         logger.warning("Process pool broke; retrying remaining files with threads")
         run_pool(ThreadPoolExecutor, [f for f in files if f.module not in results])
+
     return results
 
 
@@ -178,6 +182,87 @@ def validate_syntax(text: str, filename: str = "<consolidated>") -> ast.Module:
         raise ConsolidationError(f"generated {filename} is not valid python: {exc}") from exc
 
 
+def _normalize_resource_name(relative: str) -> str | None:
+    """Return a safe POSIX resource name, or None when it cannot be embedded."""
+    raw = str(relative).replace("\\", "/")
+    pure = PurePosixPath(raw)
+
+    if pure.is_absolute() or raw.startswith("/"):
+        return None
+
+    parts = [part for part in pure.parts if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        return None
+
+    return "/".join(parts)
+
+
+def _resource_conflict_key(name: str) -> str:
+    # Avoid silently replacing one resource with another on case-insensitive
+    # filesystems such as Android/Termux external storage.
+    return name.lower()
+
+
+def _collect_embedded_resources(
+    data_files,
+    *,
+    max_embed_bytes: int,
+) -> tuple[list[tuple[str, bytes]] | None, list[str]]:
+    if not data_files:
+        return None, []
+
+    resources: list[tuple[str, bytes]] = []
+    embedded_names: list[str] = []
+    seen: dict[str, str] = {}
+
+    for df in data_files:
+        normalized = _normalize_resource_name(df.relative)
+        if normalized is None:
+            logger.warning(
+                "Skipping unsafe resource path {!r}; it must be relative and cannot contain '..'",
+                df.relative,
+            )
+            continue
+
+        try:
+            size = df.path.stat().st_size
+        except OSError as exc:
+            logger.error("Cannot stat data file {}: {}", df.path, exc)
+            continue
+
+        if max_embed_bytes >= 0 and size > max_embed_bytes:
+            logger.warning(
+                "Skipping data file {}: {} bytes exceeds --max-embed-size ({} bytes)",
+                df.path,
+                size,
+                max_embed_bytes,
+            )
+            continue
+
+        try:
+            payload = df.path.read_bytes()
+        except OSError as exc:
+            logger.error("Cannot read data file {}: {}", df.path, exc)
+            continue
+
+        key = _resource_conflict_key(normalized)
+        previous = seen.get(key)
+        if previous is not None:
+            logger.warning(
+                "Resource path collision: {!r} and {!r} both map to {!r}; keeping the first",
+                previous,
+                df.path,
+                normalized,
+            )
+            continue
+
+        seen[key] = str(df.path)
+        resources.append((normalized, payload))
+        embedded_names.append(normalized)
+
+    return (resources if resources else None), embedded_names
+
+
 def consolidate(
     source,
     output,
@@ -201,7 +286,8 @@ def consolidate(
     keep_comments: bool = True,
     progress: bool = False,
     copy_data: bool = True,
-    embed_data: bool = False,
+    embed_data: bool = True,
+    max_embed_bytes: int = 10 * 1024 * 1024,
     data_glob: tuple = (),
     entry_keep_all: bool = False,
     main_name: str | None = None,
@@ -225,18 +311,28 @@ def consolidate(
             formatter = str(cfg["formatter"])
         if cfg.get("copy_data") is not None:
             copy_data = bool(cfg["copy_data"])
-        if cfg.get("embed_data"):
+        if cfg.get("embed_data") is not None:
             embed_data = bool(cfg["embed_data"])
+        if cfg.get("max_embed_bytes") is not None:
+            try:
+                max_embed_bytes = int(cfg["max_embed_bytes"])
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid max_embed_bytes value: {!r}", cfg["max_embed_bytes"])
         if cfg.get("data_glob"):
             data_glob = _config_list(cfg, "data_glob")
         if not modernize and cfg.get("modernize"):
             modernize = str(cfg["modernize"])
+
     if imports_mode not in ("prune", "keep", "strict"):
         raise ConsolidationError(f"imports_mode must be one of prune/keep/strict, got {imports_mode!r}")
     if main_name is not None and not is_valid_identifier(main_name):
         raise ConsolidationError(f"--main-name {main_name!r} is not a valid python identifier")
+    if max_embed_bytes < 0:
+        raise ConsolidationError("max_embed_bytes must not be negative")
+
     source, output = Path(source), Path(output)
     merged_path: Path | None = Path(merged_file) if merged_file else None
+
     if merged_path is not None:
         if not merged_path.is_file():
             raise ConsolidationError(f"merged file does not exist: {merged_path}")
@@ -244,14 +340,20 @@ def consolidate(
         # `source` is only used for config discovery / naming.
     elif not source.exists():
         raise ConsolidationError(f"source does not exist: {source}")
+
     workers = workers or os.cpu_count() or 1
+    if workers < 1:
+        raise ConsolidationError("workers must be at least 1")
+
     if merged_path is not None:
         source_name = merged_path.stem
     else:
         source_name = source.resolve().name if source.is_dir() else source.stem
+
     filename = filename or source_name
     if not filename.endswith(".py"):
         filename = f"{filename}.py"
+
     if merged_path is not None:
         files, _staged_root = load_merged_sources(merged_path)
         # Data-file discovery is not meaningful for a merged-file input: the
@@ -268,18 +370,24 @@ def consolidate(
             collect=copy_data or embed_data,
         )
         if data_glob:
-            data_files = [
-                df
-                for df in data_files
-                if any(
-                    fnmatch.fnmatch(df.relative, pat) or fnmatch.fnmatch(Path(df.path).name, pat) for pat in data_glob
-                )
-            ]
+            patterns = [pattern for pattern in data_glob if pattern]
+            if patterns:
+                data_files = [
+                    df
+                    for df in data_files
+                    if any(
+                        fnmatch.fnmatch(df.relative, pattern) or fnmatch.fnmatch(Path(df.path).name, pattern)
+                        for pattern in patterns
+                    )
+                ]
+
     if not files:
         raise ConsolidationError(f"no python files found under {source}")
+
     logger.info("Parsing {} files with {} {} worker(s)", len(files), workers, executor)
     if data_files:
         logger.info("Found {} data file(s) to preserve", len(data_files))
+
     parsed = _parse_all(
         files,
         workers,
@@ -288,6 +396,7 @@ def consolidate(
         keep_comments=keep_comments,
         show_progress=progress,
     )
+
     modules: dict = {}
     skipped: list = []
     warnings_acc: list = []
@@ -301,6 +410,7 @@ def consolidate(
             skipped.append(info.path)
             continue
         modules[name] = info
+
     if skipped:
         raise ConsolidationError(
             f"{len(skipped)} file(s) could not be parsed; refusing to emit a "
@@ -308,15 +418,12 @@ def consolidate(
         )
     if not modules:
         raise ConsolidationError("no module could be parsed")
-    resources: list[tuple[str, bytes]] | None = None
-    if embed_data and data_files:
-        resources = []
-        for df in data_files:
-            try:
-                resources.append((df.relative, Path(df.path).read_bytes()))
-            except OSError as exc:
-                logger.error("Cannot read data file {}: {}", df.path, exc)
-                raise ConsolidationError(f"cannot read data file {df.path}: {exc}")
+
+    resources, embedded_names = _collect_embedded_resources(
+        data_files,
+        max_embed_bytes=max_embed_bytes,
+    )
+
     resolver = Resolver(
         modules,
         entry=entry,
@@ -328,12 +435,15 @@ def consolidate(
         resources=resources,
     )
     plan = resolver.build()
+
     for mod, orig, final in plan.renamed:
         logger.info("Renamed {}:{} -> {}", mod, orig, final)
     for mod, name in plan.deduped:
         logger.info("Deduped {} from {}", name, mod)
+
     mod_text = render_consolidated(plan, source_name, do_format=do_format, formatter=formatter)
     exports = sum(len(v) for v in plan.exports.values())
+
     if modernize:
         # Apply modernization passes (six -> py3, os.path -> pathlib) to the
         # rendered tree. libcst round-trips so formatting is preserved; the
@@ -345,7 +455,9 @@ def consolidate(
                 mod_text = tree.code
         except Exception as exc:
             raise ConsolidationError(f"modernize pass failed on consolidated output: {exc}") from exc
+
     validate_syntax(mod_text, filename)
+
     diff_text = ""
     target = output / filename
     if diff or check:
@@ -364,9 +476,11 @@ def consolidate(
                 logger.info("No diff for {}", filename)
         else:
             logger.info("No existing {} to diff", target)
+
         if diff_text:
             logger.info("Diff ({} chars):", len(diff_text))
             sys.stdout.write(diff_text)
+
         if check:
             if diff_text:
                 raise ConsolidationError("check failed: output would change (diff not empty)")
@@ -385,6 +499,7 @@ def consolidate(
                 dry_run=True,
                 plan=plan,
             )
+
     if dry_run:
         logger.info("Dry-run: would write {} to {}", filename, output)
         logger.info(
@@ -404,7 +519,12 @@ def consolidate(
             logger.info("Would embed {} data file(s)", len(resources))
         if copy_data:
             for df in data_files:
-                logger.info("Would copy data file {} -> {}/{}", df.path, output, df.relative)
+                logger.info(
+                    "Would copy data file {} -> {}/{}",
+                    df.path,
+                    output,
+                    df.relative,
+                )
         return ConsolidationResult(
             output,
             [],
@@ -418,7 +538,9 @@ def consolidate(
             validated=True,
             dry_run=True,
             plan=plan,
+            embedded_data_files=embedded_names,
         )
+
     if stdout:
         sys.stdout.write(mod_text)
         return ConsolidationResult(
@@ -433,15 +555,18 @@ def consolidate(
             [],
             validated=True,
             plan=plan,
-            embedded_data_files=[name for name, _ in resources] if resources else [],
+            embedded_data_files=embedded_names,
         )
+
     if target.exists() and not force:
         logger.warning("{} exists — overwriting (use --force to silence)", target)
+
     output.mkdir(parents=True, exist_ok=True)
     tmp_target = target.with_suffix(target.suffix + ".tmp")
     tmp_target.write_text(mod_text, encoding="utf-8")
     tmp_target.replace(target)
     written = [target]
+
     copied: list = []
     if copy_data:
         for df in data_files:
@@ -453,8 +578,10 @@ def consolidate(
                 logger.debug("Copied data file {} -> {}", df.path, dest)
             except OSError as exc:
                 logger.error("Failed to copy data file {}: {}", df.path, exc)
+
     if resources:
         logger.info("Embedded {} data file(s) into {}", len(resources), target)
+
     return ConsolidationResult(
         output,
         written,
@@ -467,5 +594,5 @@ def consolidate(
         copied,
         validated=True,
         plan=plan,
-        embedded_data_files=[name for name, _ in resources] if resources else [],
+        embedded_data_files=embedded_names,
     )
