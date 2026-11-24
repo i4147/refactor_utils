@@ -1,62 +1,19 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "refactor-utils"
-version = "4.0.1"
-description = "Consolidate a Python package into one dependency-ordered file, or pack it into a self-extracting zip bundle."
+name = "refactor_utils"
+version = "5.0.0"
+description = "A minimal Python command-line application."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.8"
 license = { text = "MIT" }
-keywords = ["consolidate", "bundle", "merge", "python", "single-file", "zip", "modernize", "six", "pathlib"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Environment :: Console",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Code Generators",
-    "Topic :: Utilities",
-]
-dependencies = [
-    "libcst>=1.1.0",
-    "tomli>=2.0.0; python_version < '3.11'",
-]
-
-[[project.authors]]
-name = "Isaac Onagh"
-email = "hellboynaz@gmail.com"
-[project.optional-dependencies]
-format = ["black>=23.0", "ruff>=0.1.0"]
-progress = ["tqdm>=4.0"]
-dev = ["pytest>=7.0", "black", "ruff"]
+authors = [{ name = "Isaac Onagh", email = "mkalafsaz@gmail.com" }]
+dependencies = []
 
 [project.scripts]
-pyrefactor = "refactor_utils.cli:main"
+pyrefactor = "pyrefactor:main"
 
-[project.urls]
-Homepage = "https://github.com/i4147/refactor-utils"
-Repository = "https://github.com/i4147/refactor-utils"
-Issues = "https://github.com/i4147/refactor-utils/issues"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-refactor_utils = ["py.typed"]
-
-[tool.pyrefactor]
-# Self-consolidation config used by `pyrefactor .` on this very package.
-# (Demonstrates the config-file feature; not required for installation.)
-imports = "prune"
-keep_docstrings = true
-keep_comments = true
-
-[tool.ruff]
-line-length = 120
-target-version = "py311"
+[tool.setuptools]
+py-modules = ["pyrefactor"]
