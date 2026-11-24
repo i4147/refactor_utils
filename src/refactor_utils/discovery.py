@@ -1,4 +1,3 @@
-# File: discovery.py
 from __future__ import annotations
 
 import fnmatch
@@ -40,10 +39,14 @@ EXCLUDED_DIRS = {
 
 EXCLUDED_FILE_GLOBS = (
     "__main__.py",
+    ".cache.db",
+    ".cache.json",
     "conftest.py",
     "test_*.py",
+    "*_tests.py",
     "*_test.py",
     "setup.py",
+    ".cache.sqlite3",
     "_consolidated.py",
 )
 
@@ -61,6 +64,7 @@ DATA_EXTENSIONS = {
     ".dat",
     ".db",
     ".sqlite",
+    ".sqlite3",
     ".pickle",
     ".pkl",
     ".xml",
@@ -90,7 +94,6 @@ DATA_EXTENSIONS = {
     ".bmp",
     ".webp",
     ".pdf",
-    ".sqlite3",
     ".bin",
     ".exe",
     ".dll",
